@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="brand">🛒 BuyTracker</div>
+    <div class="actions">
+      <button id="add" class="primary">+ Watch page</button>
+      <button id="addArea" title="Click a region of the page to watch it">+ Area</button>
+      <button id="checkAll" title="Check all now">↻</button>
+      <button id="opts" title="Settings">⚙</button>
+    </div>
+  </header>
+  <div id="hint" class="hint hidden"></div>
+  <main id="list"></main>
+  <footer id="empty" class="hidden">No watches yet. Open a product page and hit <b>+ Watch this page</b>.</footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

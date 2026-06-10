@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "BuyTracker",
+  "version": "0.1.0",
+  "description": "Watch product pages from your own browser and get smart alerts on price drops and new offers — with CamelCamelCamel-style price history.",
+  "permissions": ["storage", "unlimitedStorage", "alarms", "notifications", "scripting", "activeTab", "tabs", "contextMenus"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "src/background.js", "type": "module" },
+  "action": { "default_popup": "src/popup.html", "default_title": "BuyTracker", "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" } },
+  "options_page": "src/options.html",
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}
