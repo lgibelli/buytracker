@@ -137,13 +137,15 @@ async function extractViaTab(url, selector) {
 }
 
 // Tier 2: cheap LLM. Runs only when there's no structured price, or a watched area changed.
+// Area watches run it ONLY when forced (their region's hash moved) — never on a full-page diff.
 async function computeFrom(ex, watch, settings, forceLlm) {
   let price = ex.hasStructuredPrice ? ex.price : null;
   let currency = ex.currency || watch.currency || null;
   let availability = ex.availability || null;
   let newOffer = false, summary = null, llmError = null;
 
-  if (settings.useLlmFallback && settings.apiKey && (price == null || forceLlm) && (ex.fullText || ex.areaText)) {
+  const allowLlm = watch.selector ? forceLlm : (price == null || forceLlm);
+  if (allowLlm && settings.useLlmFallback && settings.apiKey && (ex.fullText || ex.areaText)) {
     try {
       const r = await detectOffer({
         apiKey: settings.apiKey, model: settings.model, baselineText: watch.baselineText,
@@ -167,7 +169,9 @@ async function saveNewWatch({ cap, selector, fetchMode, baseline, watchType = 'b
   const watch = {
     id: newId(), url: cap.url, title: cap.title, createdAt: now, watchType,
     currency: cap.product?.currency || null, intervalMin: settings.defaultIntervalMin, targetPrice: null,
-    selector: selector || null, fetchMode, baselineText: baseline || '', lastAreaHash: null,
+    selector: selector || null, fetchMode, baselineText: baseline || '',
+    // Seed the area hash from the baseline so the first re-check doesn't burn an LLM call.
+    lastAreaHash: selector ? fnv1a((baseline || '').slice(0, 20000)) : null,
     paused: false, history: [], lastCheckedAt: now, lastStatus: 'ok', lastError: null, lastSummary: null,
     lastAvailability: cap.product?.availability || null
   };
@@ -186,6 +190,7 @@ async function addByTab(tab, watchType) {
 }
 
 async function addByUrl(url, watchType) {
+  if (!/^https?:\/\//i.test(url)) throw new Error('Only http(s) links can be watched.');
   let ex = await tryShopify(url).catch(() => null);
   if (!ex) ex = await fetchAndExtract(url).catch(() => null);
   if (!ex || ex.status !== 'ok') ex = await extractViaTab(url, null).catch(() => null);
@@ -214,6 +219,16 @@ async function contextAdd(info, tab, watchType) {
 
 // --- checking ---
 
+// A check can take ~40s (tab + LLM). Re-read the watch at write time so we never resurrect a
+// watch deleted mid-check, and never clobber user edits (interval/target/pause/type) made meanwhile.
+async function saveChecked(watch) {
+  const fresh = await getWatch(watch.id);
+  if (!fresh) return false;
+  for (const k of ['intervalMin', 'targetPrice', 'paused', 'watchType']) watch[k] = fresh[k];
+  await putWatch(watch);
+  return true;
+}
+
 async function checkWatch(watch) {
   if (!watch) throw new Error('Watch not found');
   const settings = await getSettings();
@@ -223,40 +238,52 @@ async function checkWatch(watch) {
     if (!watch.selector) ex = await tryShopify(watch.url).catch(() => null); // Shopify fast-path (not for area watches)
     if (!ex) ex = (watch.fetchMode === 'tab') ? await extractViaTab(watch.url, watch.selector) : await fetchAndExtract(watch.url);
 
-    let force = !!watch.selector && !!ex.textHash && ex.textHash !== watch.lastAreaHash;
+    // A stale area selector must not force LLM diffs of the full page against the area baseline.
+    const areaOk = !watch.selector || !!ex.areaText;
+    let force = areaOk && !!watch.selector && !!ex.textHash && ex.textHash !== watch.lastAreaHash;
     let res = await computeFrom(ex, watch, settings, force);
 
-    if ((ex.status === 'blocked' || res.price == null) && !ex.viaTab && watch.fetchMode !== 'fetch') {
+    // Escalate to a real tab when blocked, or when we got no usable signal for this watch type.
+    const availEnough = watch.watchType === 'availability' && res.availability != null;
+    if ((ex.status === 'blocked' || (res.price == null && !availEnough)) && !ex.viaTab && watch.fetchMode !== 'fetch') {
       const ex2 = await extractViaTab(watch.url, watch.selector);
       if (ex2.status === 'ok') {
-        const res2 = await computeFrom(ex2, watch, settings, !!watch.selector && ex2.textHash !== watch.lastAreaHash);
-        if (res2.price != null || ex2.hasStructuredPrice) { ex = ex2; res = res2; watch.fetchMode = 'tab'; }
-        else if (ex.status === 'blocked') { ex = ex2; res = res2; }
+        const wasBlocked = ex.status === 'blocked';
+        const areaOk2 = !watch.selector || !!ex2.areaText;
+        const res2 = await computeFrom(ex2, watch, settings, areaOk2 && !!watch.selector && ex2.textHash !== watch.lastAreaHash);
+        if (wasBlocked || res2.price != null || ex2.hasStructuredPrice) {
+          ex = ex2; res = res2; watch.fetchMode = 'tab';
+        } else {
+          watch.fetchMode = 'fetch'; // the tab saw nothing the fetch didn't — stop paying for a tab each check
+        }
       }
     }
 
     if (ex.status === 'blocked') {
       watch.lastStatus = 'blocked'; watch.lastError = 'blocked'; watch.lastCheckedAt = now;
-      await putWatch(watch); return watch;
+      await saveChecked(watch); return watch;
     }
 
-    if (watch.selector && ex.textHash) watch.lastAreaHash = ex.textHash;
+    const areaOkFinal = !watch.selector || !!ex.areaText;
+    if (watch.selector && areaOkFinal && ex.textHash) watch.lastAreaHash = ex.textHash;
     const change = recordObservation(watch, { t: now, price: res.price, currency: res.currency, availability: res.availability });
     watch.lastStatus = (res.price == null && !res.availability) ? 'no_data' : 'ok';
     watch.lastCheckedAt = now;
     watch.lastSummary = res.summary || watch.lastSummary;
-    watch.lastError = res.llmError || (watch.lastStatus === 'ok' ? null : watch.lastError);
+    watch.lastError = res.llmError
+      || (watch.selector && !areaOkFinal ? 'watched area not found (selector may be stale — re-create the area watch)' : null);
 
-    await putWatch(watch);
-    fireNotifications(watch, { change, price: res.price, currency: res.currency, newOffer: res.newOffer });
+    const saved = await saveChecked(watch);
+    if (saved) fireNotifications(watch, { change, price: res.price, currency: res.currency, newOffer: res.newOffer });
     return watch;
   } catch (e) {
     watch.lastStatus = 'error'; watch.lastError = String(e.message || e); watch.lastCheckedAt = now;
-    await putWatch(watch); return watch;
+    await saveChecked(watch); return watch;
   }
 }
 
 function fireNotifications(watch, { change, price, currency, newOffer }) {
+  if (!change && !newOffer) return; // nothing actually changed — never repeat alerts (e.g. target-hit) every check
   const cur = currency || watch.currency || '';
   const wantsPrice = watch.watchType !== 'availability';
   const wantsAvail = watch.watchType !== 'price';
