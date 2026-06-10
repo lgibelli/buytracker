@@ -32,6 +32,16 @@ price history** with a step chart and change markers.
 - The popup lists each watch with its current price, change vs. last, a price-history chart, status, interval, and a target-price field.
 - **check now** forces a re-check; **↻** checks everything that’s due.
 
+## Testing
+
+Automated smoke test (headless Chromium loads the unpacked extension, boots the service worker,
+renders popup/options, and runs a real end-to-end add-watch + re-check against a live product page):
+
+```bash
+mkdir -p /tmp/bt-test && cd /tmp/bt-test && npm i playwright   # once
+node /path/to/buytracker/test/smoke.js
+```
+
 ## How it works
 
 ```
