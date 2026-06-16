@@ -105,7 +105,7 @@ async function fetchHtml(url) {
 
 async function fetchAndExtract(url) {
   const { httpOk, status, html } = await fetchHtml(url);
-  const ex = extractFromHtml(html);
+  const ex = extractFromHtml(html, url);
   if (ex.status === 'blocked') return { status: 'blocked', title: ex.title, viaTab: false, httpStatus: status };
   return {
     status: 'ok', title: ex.title, price: ex.price, currency: ex.currency, availability: ex.availability,

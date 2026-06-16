@@ -35,18 +35,65 @@ export function parsePrice(v) {
   return isFinite(n) ? n : null;
 }
 
+// schema.org offers can be a single Offer, an array of per-variant Offers, or an AggregateOffer
+// that wraps a nested `offers` array. Flatten all shapes to a plain list of Offer nodes.
+function flattenOffers(offersNode) {
+  if (!offersNode) return [];
+  const arr = Array.isArray(offersNode) ? offersNode : [offersNode];
+  const out = [];
+  for (const o of arr) {
+    if (o && Array.isArray(o.offers)) out.push(...o.offers); // AggregateOffer wrapper
+    else if (o) out.push(o);
+  }
+  return out;
+}
+
+// Identifiers that pin down "the selected variant" from the page URL — platform-agnostic.
+export function variantKeysFromUrl(url) {
+  const ks = new Set();
+  if (!url) return ks;
+  try {
+    const u = new URL(url);
+    for (const k of ['variant', 'variant_id', 'variantId', 'sku', 'pid']) {
+      const v = u.searchParams.get(k);
+      if (v) ks.add(v);
+    }
+  } catch { /* ignore */ }
+  return ks;
+}
+
+// Does an offer reference (its url or @id) point at the selected variant?
+function refMatches(ref, url, keys) {
+  if (!ref) return false;
+  try {
+    const ru = new URL(ref, url);
+    const rv = ru.searchParams.get('variant') || ru.searchParams.get('variant_id');
+    if (rv && keys.has(rv)) return true;
+  } catch { /* ignore */ }
+  for (const k of keys) if (String(ref).includes(k)) return true;
+  return false;
+}
+
 // Walk JSON-LD blocks for the best Product/Offer. Returns {name, price, currency, availability} or null.
+// Each offer becomes its own candidate so per-variant offers — whether listed in one Product's
+// `offers` array or split across many Product blocks (Shopify does the latter) — can be matched
+// individually against the URL's variant.
 // NOTE: availability is captured even when there is NO price — many shops drop the price when a
 // product goes out of stock, and restock detection depends on still seeing the availability flip.
-export function productFromJsonLd(blocks) {
+export function productFromJsonLd(blocks, url) {
+  const keys = variantKeysFromUrl(url);
   const cands = [];
   const consider = (node) => {
-    const off = Array.isArray(node.offers) ? node.offers[0] : node.offers;
-    const price = parsePrice(node.price ?? off?.price ?? off?.lowPrice ?? node.lowPrice);
-    const currency = (node.priceCurrency ?? off?.priceCurrency ?? '').toString().toUpperCase() || null;
-    const availability = AVAIL(node.availability ?? off?.availability) || null;
-    if (price == null && !availability) return;
-    cands.push({ name: node.name || null, price, currency, availability });
+    const offers = flattenOffers(node.offers);
+    for (const off of (offers.length ? offers : [null])) {
+      const price = parsePrice(off?.price ?? off?.lowPrice ?? node.price ?? node.lowPrice);
+      const currency = (off?.priceCurrency ?? node.priceCurrency ?? '').toString().toUpperCase() || null;
+      const availability = AVAIL(off?.availability ?? node.availability) || null;
+      if (price == null && !availability) continue;
+      const ref = off?.url || off?.['@id'] || node.url || node['@id'] || null;
+      const sku = off?.sku ?? node.sku ?? null;
+      cands.push({ name: node.name || null, price, currency, availability, ref, sku });
+    }
   };
   const walk = (n) => {
     if (!n || typeof n !== 'object') return;
@@ -58,11 +105,18 @@ export function productFromJsonLd(blocks) {
   blocks.forEach(walk);
   if (!cands.length) return null;
 
-  // Prefer a priced candidate, and among those one that carries a product name.
+  const strip = (c) => ({ name: c.name, price: c.price, currency: c.currency, availability: c.availability });
+
+  // Variant match wins: the candidate whose offer sku or url/@id matches the selected variant.
+  if (keys.size) {
+    const m = cands.find((c) => (c.sku != null && keys.has(String(c.sku))) || refMatches(c.ref, url, keys));
+    if (m) return strip(m);
+  }
+  // Otherwise prefer a priced candidate that carries a product name.
   const priced = cands.filter((c) => c.price != null);
   const pool = priced.length ? priced : cands;
   pool.sort((a, b) => (b.name ? 1 : 0) - (a.name ? 1 : 0));
-  const best = { ...pool[0] };
+  const best = strip(pool[0]);
   if (!best.availability) { const a = cands.find((c) => c.availability); if (a) best.availability = a.availability; }
   return best;
 }
@@ -104,11 +158,11 @@ export function fnv1a(str) {
   return h.toString(16);
 }
 
-// One-stop deterministic extraction from raw HTML.
-export function extractFromHtml(html) {
+// One-stop deterministic extraction from raw HTML. `url` lets variant-matching pick the right offer.
+export function extractFromHtml(html, url) {
   const title = titleFromHtml(html);
   if (detectBlock(html, title)) return { status: 'blocked', title };
-  const product = productFromJsonLd(parseJsonLd(html));
+  const product = productFromJsonLd(parseJsonLd(html), url);
   const text = htmlToText(html);
   return {
     status: 'ok',
