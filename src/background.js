@@ -6,7 +6,7 @@ import {
   getSettings, getWatches, getWatch, putWatch, newId, recordObservation
 } from './lib/storage.js';
 
-const TICK_MIN = 5;
+const TICK_MIN = 15;
 
 function setupMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -37,7 +37,13 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
   (async () => {
     try {
       if (msg.type === 'addCurrentTab') return sendResponse({ ok: true, watch: await addByTab((await activeTab()), 'both') });
-      if (msg.type === 'addAreaFromTab') return sendResponse({ ok: true, watch: await addAreaFromTab() });
+      if (msg.type === 'addAreaFromTab') {
+        // Ack right away so the popup can close — it MUST close for the user to click the page.
+        // Awaiting the full pick would keep the popup (and the message channel) open until the
+        // click, which never comes because the popup is covering the page. The picker runs detached.
+        addAreaFromTab().catch((e) => console.warn('area', e));
+        return sendResponse({ ok: true });
+      }
       if (msg.type === 'checkNow') return sendResponse({ ok: true, watch: await checkWatch(await getWatch(msg.id)) });
       if (msg.type === 'checkAll') { await checkDue(true); return sendResponse({ ok: true }); }
       sendResponse({ ok: false, error: 'unknown message' });
@@ -204,11 +210,25 @@ async function addByUrl(url, watchType) {
 }
 
 async function addAreaFromTab() {
-  const tab = await activeTab();
-  const [{ result: pick } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickArea });
-  if (!pick) throw new Error('Cancelled.');
-  const [{ result: cap } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: capturePage, args: [pick.selector] });
-  return saveNewWatch({ cap: cap || { url: tab.url, title: tab.title }, selector: pick.selector, fetchMode: 'tab', baseline: pick.areaText || cap?.areaText || cap?.pageText, watchType: 'both' });
+  let tab;
+  try {
+    tab = await activeTab();
+  } catch (e) {
+    // The popup is already closed by now, so a thrown error would vanish — toast instead.
+    toast('BuyTracker', (e.message || String(e)) + ' Area watching only works on a normal product page.');
+    throw e;
+  }
+  try {
+    const [{ result: pick } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickArea });
+    if (!pick) return null; // user pressed Esc or it timed out — stay quiet, not an error
+    const [{ result: cap } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: capturePage, args: [pick.selector] });
+    const watch = await saveNewWatch({ cap: cap || { url: tab.url, title: tab.title }, selector: pick.selector, fetchMode: 'tab', baseline: pick.areaText || cap?.areaText || cap?.pageText, watchType: 'both' });
+    toast('👀 Watching area', `${watch.title} — watching the region you selected.`);
+    return watch;
+  } catch (e) {
+    toast('BuyTracker', 'Could not start the area picker here: ' + (e.message || e));
+    throw e;
+  }
 }
 
 async function contextAdd(info, tab, watchType) {

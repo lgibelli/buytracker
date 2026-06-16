@@ -31,9 +31,11 @@ export function pickArea() {
     const box = document.createElement('div');
     box.style.cssText = `position:fixed;z-index:${Z};border:2px solid #1f6feb;background:rgba(31,111,235,.12);pointer-events:none;border-radius:3px;left:0;top:0;width:0;height:0`;
     const bar = document.createElement('div');
-    bar.textContent = 'BuyTracker — click the price/offer area to watch · Esc to cancel';
-    bar.style.cssText = `position:fixed;z-index:${Z};left:0;right:0;top:0;background:#1f6feb;color:#fff;font:13px system-ui,sans-serif;padding:7px 12px;text-align:center;pointer-events:none`;
+    bar.textContent = '🛒 BuyTracker — move your mouse over the price/offer, then click to watch it · Esc to cancel';
+    bar.style.cssText = `position:fixed;z-index:${Z};left:0;right:0;top:0;background:#1f6feb;color:#fff;font:13px system-ui,sans-serif;padding:8px 12px;text-align:center;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.3)`;
     document.body.append(box, bar);
+    const prevCursor = document.documentElement.style.cursor;
+    document.documentElement.style.cursor = 'crosshair';
 
     let cur = null;
     const to = setTimeout(() => finish(null), 60000);
@@ -59,6 +61,7 @@ export function pickArea() {
     function key(e) { if (e.key === 'Escape') finish(null); }
     function finish(val) {
       clearTimeout(to);
+      document.documentElement.style.cursor = prevCursor;
       box.remove(); bar.remove();
       window.removeEventListener('mousemove', move, true);
       window.removeEventListener('click', click, true);

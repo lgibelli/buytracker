@@ -8,6 +8,19 @@ const hintEl = document.getElementById('hint');
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = (n) => (n == null ? '—' : Number.isInteger(n) ? n : n.toFixed(2));
 
+function ago(t) {
+  if (!t) return 'never';
+  const s = Math.floor((Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24); return `${d}d ago`;
+}
+
+// Which cards are expanded — kept in memory so a re-render (e.g. after "check now")
+// doesn't re-collapse what the user opened. Resets to all-collapsed when the popup reopens.
+const expanded = new Set();
+
 const INTERVALS = [[60, '1h'], [180, '3h'], [360, '6h'], [720, '12h'], [1440, '1d'], [4320, '3d']];
 
 function deltaHtml(history) {
@@ -42,26 +55,34 @@ function modeBadge(w) {
 function card(w) {
   const cur = w.currency || '';
   const opts = INTERVALS.map(([v, l]) => `<option value="${v}" ${w.intervalMin === v ? 'selected' : ''}>${l}</option>`).join('');
-  return `<div class="card" data-id="${w.id}">
-    <div class="top">
-      <div class="title"><a href="${esc(w.url)}" data-act="open">${esc(w.title || w.url)}</a></div>
+  // Surface trouble in the collapsed row so a blocked/errored watch isn't hidden behind the fold.
+  const problem = (w.lastStatus && w.lastStatus !== 'ok') ? statusBadge(w) : '';
+  return `<div class="card${expanded.has(w.id) ? '' : ' collapsed'}" data-id="${w.id}">
+    <div class="head" data-act="toggle">
+      <button class="chev" data-act="toggle" title="Show details" aria-label="Show details">▾</button>
+      <div class="head-main">
+        <div class="title"><a href="${esc(w.url)}" data-act="open">${esc(w.title || w.url)}</a></div>
+        <div class="sub">checked ${ago(w.lastCheckedAt)}${w.paused ? ' · paused' : ''} ${problem}</div>
+      </div>
       <div class="price"><div class="now">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${deltaHtml(w.history)}</div>
     </div>
-    <div class="meta">
-      ${statusBadge(w)}
-      ${availBadge(w)}
-      ${modeBadge(w)}
-      ${w.selector ? '<span class="badge" title="Semantic area watch">area</span>' : ''}
-      <span>checks every</span>
-      <select data-act="interval">${opts}</select>
-      <label>≤ <input class="target" type="number" step="0.01" placeholder="target" value="${w.targetPrice ?? ''}" data-act="target"></label>
-      <span style="margin-left:auto"></span>
-      <button class="linkbtn" data-act="check">check now</button>
-      <button class="linkbtn" data-act="pause">${w.paused ? 'resume' : 'pause'}</button>
-      <button class="linkbtn" data-act="delete">delete</button>
+    <div class="detail">
+      <div class="meta">
+        ${statusBadge(w)}
+        ${availBadge(w)}
+        ${modeBadge(w)}
+        ${w.selector ? '<span class="badge" title="Semantic area watch">area</span>' : ''}
+        <span>checks every</span>
+        <select data-act="interval">${opts}</select>
+        <label>≤ <input class="target" type="number" step="0.01" placeholder="target" value="${w.targetPrice ?? ''}" data-act="target"></label>
+        <span style="margin-left:auto"></span>
+        <button class="iconbtn" data-act="check" title="Check now" aria-label="Check now">↻</button>
+        <button class="iconbtn" data-act="pause" title="${w.paused ? 'Resume' : 'Pause'}" aria-label="${w.paused ? 'Resume' : 'Pause'}">${w.paused ? '▶' : '⏸'}</button>
+        <button class="iconbtn danger" data-act="delete" title="Delete" aria-label="Delete">🗑</button>
+      </div>
+      <div class="chart">${priceChartSVG(w.history, { currency: cur, width: 358, height: 110 })}</div>
+      ${w.lastSummary ? `<div class="summary">“${esc(w.lastSummary)}”</div>` : ''}
     </div>
-    <div class="chart">${priceChartSVG(w.history, { currency: cur, width: 358, height: 110 })}</div>
-    ${w.lastSummary ? `<div class="summary">“${esc(w.lastSummary)}”</div>` : ''}
   </div>`;
 }
 
@@ -85,9 +106,10 @@ document.getElementById('add').addEventListener('click', () =>
     if (!r?.ok) throw new Error(r?.error || 'failed to add');
   }));
 
-document.getElementById('addArea').addEventListener('click', () => {
-  // Fire-and-forget: the picker runs in the page; close the popup so the user can click.
-  chrome.runtime.sendMessage({ type: 'addAreaFromTab' }).catch(() => {});
+document.getElementById('addArea').addEventListener('click', async () => {
+  // Wait for the SW to acknowledge (and start the picker) BEFORE closing — closing immediately
+  // tears down the popup's renderer and drops the message, so the picker never launches.
+  try { await chrome.runtime.sendMessage({ type: 'addAreaFromTab' }); } catch { /* closing */ }
   window.close();
 });
 
@@ -98,10 +120,18 @@ document.getElementById('opts').addEventListener('click', () => chrome.runtime.o
 
 document.addEventListener('click', async (e) => {
   if (e.target.id === 'toOpts') { e.preventDefault(); chrome.runtime.openOptionsPage(); return; }
-  const act = e.target.dataset?.act;
+  const actEl = e.target.closest('[data-act]');
   const card = e.target.closest('.card');
-  if (!act || !card) return;
+  if (!actEl || !card) return;
+  const act = actEl.dataset.act;
   const id = card.dataset.id;
+
+  if (act === 'toggle') {
+    card.classList.toggle('collapsed');
+    if (card.classList.contains('collapsed')) expanded.delete(id); else expanded.add(id);
+    return;
+  }
+
   const watches = await getWatches();
   const w = watches[id];
   if (!w) return;
