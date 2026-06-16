@@ -192,6 +192,20 @@ async function addByTab(tab, watchType) {
   if (!/^https?:/.test(tab.url || '')) throw new Error('Not a web page.');
   const [{ result } = {}] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: capturePage, args: [null] });
   if (!result) throw new Error('Could not read the page.');
+  // Keep the address-bar URL so a Shopify ?variant= selection is preserved in the watch.
+  result.url = tab.url || result.url;
+  // capturePage reads the page's JSON-LD, whose offers are per-variant — it takes the FIRST one,
+  // so a multi-variant product reads "in stock" even when the selected variant is sold out.
+  // The /products/<handle>.js endpoint reports the exact selected variant — prefer it when present.
+  const sh = await tryShopify(result.url).catch(() => null);
+  if (sh && sh.status === 'ok') {
+    result.product = {
+      name: result.product?.name || result.title || null,
+      price: sh.price ?? result.product?.price ?? null,
+      currency: sh.currency || result.product?.currency || null,
+      availability: sh.availability || result.product?.availability || null
+    };
+  }
   return saveNewWatch({ cap: result, selector: null, fetchMode: 'auto', baseline: result.pageText, watchType });
 }
 
