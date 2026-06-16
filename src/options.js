@@ -3,6 +3,9 @@ import { getSettings, setSettings } from './lib/storage.js';
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
 
+// Always read the live manifest version so what's shown can't drift from what's packaged.
+$('ver').textContent = `BuyTracker v${chrome.runtime.getManifest().version}`;
+
 async function load() {
   const s = await getSettings();
   $('apiKey').value = s.apiKey || '';
