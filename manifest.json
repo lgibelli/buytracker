@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "BuyTracker",
   "version": "0.1.5",
-  "description": "Watch product pages from your own browser and get smart alerts on price drops and new offers — with CamelCamelCamel-style price history.",
+  "description": "Watch any product page for price drops, new offers, and restocks — with smart alerts and price history.",
   "permissions": ["storage", "unlimitedStorage", "alarms", "notifications", "scripting", "activeTab", "tabs", "contextMenus"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "src/background.js", "type": "module" },
