@@ -34,6 +34,8 @@ main { padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
 .card.collapsed .detail { display: none; }
 .price { white-space: nowrap; text-align: right; flex: none; }
 .price .now { font-size: 16px; font-weight: 700; }
+.price .now.oos { text-decoration: line-through; color: #7a8794; }
+.price .oos-tag { font-size: 11px; color: #f0c674; }
 .price .delta { font-size: 11px; }
 .up { color: #f87171; } .down { color: #34d399; } .muted { color: #7a8794; }
 .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; font-size: 11px; color: #8b97a4; align-items: center; }

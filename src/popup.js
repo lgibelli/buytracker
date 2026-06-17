@@ -40,10 +40,16 @@ function statusBadge(w) {
   return `<span class="badge ${esc(s)}" title="${esc(w.lastError || '')}">${label}</span>`;
 }
 
+// 'in' | 'out' | null (unknown) — single source of truth for stock state.
+function stockState(w) {
+  if (!w.lastAvailability) return null;
+  return /instock|in stock|limited/i.test(w.lastAvailability) ? 'in' : 'out';
+}
+
 function availBadge(w) {
-  if (!w.lastAvailability) return '';
-  const inStock = /instock|in stock|limited/i.test(w.lastAvailability);
-  return `<span class="badge ${inStock ? 'ok' : 'no_data'}">${inStock ? 'in stock' : 'out of stock'}</span>`;
+  const s = stockState(w);
+  if (!s) return '';
+  return `<span class="badge ${s === 'in' ? 'ok' : 'no_data'}">${s === 'in' ? 'in stock' : 'out of stock'}</span>`;
 }
 
 function modeBadge(w) {
@@ -64,7 +70,7 @@ function card(w) {
         <div class="title"><a href="${esc(w.url)}" data-act="open">${esc(w.title || w.url)}</a></div>
         <div class="sub">checked ${ago(w.lastCheckedAt)}${w.paused ? ' · paused' : ''} ${problem}</div>
       </div>
-      <div class="price"><div class="now">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${deltaHtml(w.history)}</div>
+      <div class="price"><div class="now${stockState(w) === 'out' ? ' oos' : ''}">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${stockState(w) === 'out' ? '<div class="oos-tag">out of stock</div>' : deltaHtml(w.history)}</div>
     </div>
     <div class="detail">
       <div class="meta">
