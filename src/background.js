@@ -2,11 +2,13 @@ import { extractFromHtml, detectBlock, fnv1a } from './lib/extract.js';
 import { detectOffer } from './lib/llm.js';
 import { capturePage } from './lib/capture.js';
 import { pickArea } from './lib/picker.js';
+import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe } from './lib/recipe.js';
 import {
   getSettings, getWatches, getWatch, putWatch, newId, recordObservation
 } from './lib/storage.js';
 
 const TICK_MIN = 15;
+const RECIPE_STALE_MS = 7 * 24 * 60 * 60 * 1000; // re-derive a stuck per-site recipe at most weekly
 
 function setupMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -124,7 +126,18 @@ function waitForComplete(tabId, timeout) {
   });
 }
 
-async function extractViaTab(url, selector) {
+// Run an injected function in the page's MAIN world (so it can read window globals — recipes need
+// this; capturePage stays in the default isolated world).
+async function runInPage(tabId, func, args) {
+  const [{ result } = {}] = await chrome.scripting.executeScript({ target: { tabId }, func, args, world: 'MAIN' });
+  return result;
+}
+
+// opts: { recipe, derive, need:{price,avail}, settings } — all optional.
+// A cached per-site recipe is applied on every tab check (deterministic, free). When `derive` is set
+// and a needed signal is still missing, we snapshot the page and ask the worker for a recipe ONCE,
+// cache it, and apply it — all within this single tab so we never open a second one to derive.
+async function extractViaTab(url, selector, opts = {}) {
   const tab = await chrome.tabs.create({ url, active: false });
   try {
     await waitForComplete(tab.id, 35000);
@@ -134,10 +147,45 @@ async function extractViaTab(url, selector) {
     const full = result.pageText || '';
     const area = result.areaText || null;
     if (detectBlock(full, result.title)) return { status: 'blocked', title: result.title, viaTab: true };
+
+    let price = result.product?.price ?? null;
+    let currency = result.product?.currency ?? null;
+    let availability = result.product?.availability ?? null;
+    let recipeUsed = false, recipeDerived = false, recipeError = null;
+
+    // A site-specific recipe is authoritative over the generic heuristic — it was derived precisely
+    // because the heuristic got this site wrong. It only ever sets a field it actually resolves.
+    const apply = (rec) => {
+      if (!rec) return;
+      recipeUsed = true;
+      if (rec.price != null) price = rec.price;
+      if (rec.currency) currency = rec.currency;
+      if (rec.availability) availability = rec.availability;
+    };
+
+    // Recipes describe the main product; skip them for area watches (which monitor a sub-region).
+    const recipesAllowed = !selector;
+    const cached = recipesAllowed ? (opts.recipe ?? await getRecipe(url)) : null;
+    if (cached) apply(await runInPage(tab.id, applyRecipe, [cached]));
+
+    const need = opts.need || { price: true, avail: true };
+    const stillMissing = (need.price && price == null) || (need.avail && !availability);
+    const s = opts.settings;
+    // Derive when no recipe exists yet; only RE-derive a cached one once it's gone stale — otherwise a
+    // legitimately-absent signal (e.g. price hidden while out of stock) would re-derive every check.
+    const stale = cached && Date.now() - (cached.cachedAt || 0) > RECIPE_STALE_MS;
+    if (recipesAllowed && opts.derive && stillMissing && s?.workerUrl && s?.workerToken && (!cached || stale)) {
+      try {
+        const snapshot = await runInPage(tab.id, buildSnapshot, [selector || null]);
+        const fresh = await deriveRecipe({ workerUrl: s.workerUrl, token: s.workerToken, url, snapshot, force: !!cached });
+        if (fresh) { await putRecipe(url, fresh); recipeDerived = true; apply(await runInPage(tab.id, applyRecipe, [fresh])); }
+      } catch (e) { recipeError = 'recipe: ' + String(e.message || e); }
+    }
+
     return {
-      status: 'ok', title: result.title, price: result.product?.price ?? null, currency: result.product?.currency ?? null,
-      availability: result.product?.availability ?? null, hasStructuredPrice: result.product?.price != null,
-      fullText: full, areaText: area, textHash: fnv1a((area || full).slice(0, 20000)), viaTab: true
+      status: 'ok', title: result.title, price, currency, availability, hasStructuredPrice: price != null,
+      fullText: full, areaText: area, textHash: fnv1a((area || full).slice(0, 20000)),
+      viaTab: true, recipeUsed, recipeDerived, recipeError
     };
   } finally { try { await chrome.tabs.remove(tab.id); } catch { /* gone */ } }
 }
@@ -270,10 +318,16 @@ async function checkWatch(watch) {
   if (!watch) throw new Error('Watch not found');
   const settings = await getSettings();
   const now = Date.now();
+  const needPrice = watch.watchType !== 'availability';
+  const needAvail = watch.watchType !== 'price';
+  // Any tab we open auto-applies a cached per-site recipe and, when a signal this watch needs is
+  // still missing and a worker is configured, derives one (once per host, then cached). Folded into
+  // the tab calls so the long-tail fallback never costs an extra tab.
+  const tabOpts = { derive: true, need: { price: needPrice, avail: needAvail }, settings };
   try {
     let ex = null;
     if (!watch.selector) ex = await tryShopify(watch.url).catch(() => null); // Shopify fast-path (not for area watches)
-    if (!ex) ex = (watch.fetchMode === 'tab') ? await extractViaTab(watch.url, watch.selector) : await fetchAndExtract(watch.url);
+    if (!ex) ex = (watch.fetchMode === 'tab') ? await extractViaTab(watch.url, watch.selector, tabOpts) : await fetchAndExtract(watch.url);
 
     // A stale area selector must not force LLM diffs of the full page against the area baseline.
     const areaOk = !watch.selector || !!ex.areaText;
@@ -283,15 +337,13 @@ async function checkWatch(watch) {
     // Escalate to a real tab when blocked, or when the static fetch lacks a signal this watch needs.
     // A tab renders client-side price/stock (and runs the buy-box heuristic) that a raw fetch can't
     // see — many stores expose nothing without JS (no JSON-LD, price/availability injected later).
-    const needPrice = watch.watchType !== 'availability';
-    const needAvail = watch.watchType !== 'price';
     const missing = (needPrice && res.price == null) || (needAvail && res.availability == null);
     // A blind static fetch (no price, no availability, no structured data) is uninformative for this
     // URL, so allow escalation even from sticky 'fetch' mode — that mode only meant to stop redundant
     // tabs when the fetch already yields data, not to strand a JS-only page on an empty result.
     const staticBlind = res.price == null && res.availability == null && !ex.hasStructuredPrice;
     if ((ex.status === 'blocked' || missing) && !ex.viaTab && (watch.fetchMode !== 'fetch' || staticBlind)) {
-      const ex2 = await extractViaTab(watch.url, watch.selector);
+      const ex2 = await extractViaTab(watch.url, watch.selector, tabOpts);
       if (ex2.status === 'ok') {
         const wasBlocked = ex.status === 'blocked';
         const areaOk2 = !watch.selector || !!ex2.areaText;
@@ -318,7 +370,7 @@ async function checkWatch(watch) {
     watch.lastStatus = (res.price == null && !res.availability) ? 'no_data' : 'ok';
     watch.lastCheckedAt = now;
     watch.lastSummary = res.summary || watch.lastSummary;
-    watch.lastError = res.llmError
+    watch.lastError = res.llmError || ex.recipeError
       || (watch.selector && !areaOkFinal ? 'watched area not found (selector may be stale — re-create the area watch)' : null);
 
     const saved = await saveChecked(watch);

@@ -1,0 +1,18 @@
+name = "buytracker-recipes"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+# Per-site parse recipes are cached here, keyed by hostname.
+# Create the namespace once, then paste its id below:
+#   wrangler kv namespace create RECIPES
+[[kv_namespaces]]
+binding = "RECIPES"
+id = "PASTE_KV_NAMESPACE_ID_HERE"
+
+[vars]
+# Default model for recipe derivation. Override per-deploy if you like.
+MODEL = "claude-haiku-4-5"
+
+# Secrets (DO NOT put these here — set them with `wrangler secret put`):
+#   wrangler secret put ANTHROPIC_KEY   # your sk-ant-... key, kept server-side
+#   wrangler secret put AUTH_TOKEN      # a long random string the extension must send

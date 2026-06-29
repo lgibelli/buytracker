@@ -34,6 +34,15 @@
 
   <div class="row"><input id="useLlmFallback" type="checkbox"><label style="margin:0">Enable the LLM fallback</label></div>
 
+  <h2>Recipe worker (optional)</h2>
+  <div class="hint">For stores the built-in extractors can't parse, a Cloudflare Worker can derive a reusable per-site parse recipe <em>once</em> (cached, then run for free on every check) instead of calling the LLM each time. Leave blank to skip. <a href="https://github.com/lgibelli/buytracker/tree/main/worker" target="_blank" style="color:#6cb0ff">Setup →</a></div>
+  <label>Worker URL</label>
+  <input id="workerUrl" type="url" placeholder="https://buytracker-recipes.YOUR-SUBDOMAIN.workers.dev">
+  <label>Worker token</label>
+  <input id="workerToken" type="password" placeholder="the AUTH_TOKEN you set on the worker">
+  <div class="hint">Must match the worker's <code>AUTH_TOKEN</code> secret. Sent only to your worker URL.</div>
+  <div class="row"><button id="testWorker" class="ghost" style="margin-top:10px">Test worker</button><span id="workerStatus"></span></div>
+
   <h2>Defaults</h2>
   <label>Default check interval for new watches</label>
   <select id="defaultIntervalMin">

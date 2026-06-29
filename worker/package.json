@@ -1,0 +1,13 @@
+{
+  "name": "buytracker-recipes",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker that derives reusable per-site product-parse recipes with Claude",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

@@ -1,0 +1,173 @@
+// Per-site parse recipes. The deterministic extractors (JSON-LD, Shopify .js, rendered-DOM
+// price/buy-box in capture.js) handle most stores. For the long tail that they get wrong or can't
+// read, the worker (../../worker) derives a reusable recipe ONCE per host from a reduced snapshot;
+// we cache it locally and run it deterministically — in the page's MAIN world — on every check.
+//
+// buildSnapshot() and applyRecipe() are INJECTED via chrome.scripting.executeScript({world:'MAIN'}),
+// so they must be fully self-contained: no imports, no references to module scope. MAIN world (not
+// the default isolated world) is required so they can read page globals like window.dataLayer.
+
+// ---- injected: reduce a rendered page to a small snapshot for the LLM ----
+export function buildSnapshot(selector) {
+  const NUM = /(\d{1,3}(?:[.\s ]?\d{3})*(?:[.,]\d{2}))/;
+  const curOf = (s) => /€|\bEUR\b/i.test(s) ? 'EUR' : /\$|\bUSD\b/i.test(s) ? 'USD' : /£|\bGBP\b/i.test(s) ? 'GBP' : /zł|\bPLN\b/i.test(s) ? 'PLN' : /\bCHF\b/i.test(s) ? 'CHF' : null;
+  const STRUCK = /\b(old|was|strike|compare|regular|original|listino|previous|vecchio|barrat|precedente)\b/i;
+  const isStruck = (el) => {
+    for (let p = el, i = 0; p && i < 4; p = p.parentElement, i++) {
+      if (p.tagName === 'DEL' || p.tagName === 'S' || p.tagName === 'STRIKE') return true;
+      if (STRUCK.test(String(p.className || ''))) return true;
+      try { if (getComputedStyle(p).textDecorationLine.includes('line-through')) return true; } catch { /* noop */ }
+    }
+    return false;
+  };
+  // A stable-ish CSS selector for an element: prefer #id, else a tag[:nth-of-type] chain (≤6 deep).
+  const cssPath = (el) => {
+    if (!el || el.nodeType !== 1) return null;
+    if (el.id && /^[A-Za-z][\w-]*$/.test(el.id)) return '#' + el.id;
+    const parts = [];
+    for (let node = el; node && node.nodeType === 1 && node.tagName !== 'HTML' && parts.length < 6; node = node.parentElement) {
+      if (node.id && /^[A-Za-z][\w-]*$/.test(node.id)) { parts.unshift('#' + node.id); break; }
+      let sel = node.tagName.toLowerCase();
+      const parent = node.parentElement;
+      if (parent) {
+        const sibs = Array.from(parent.children).filter((c) => c.tagName === node.tagName);
+        if (sibs.length > 1) sel += `:nth-of-type(${sibs.indexOf(node) + 1})`;
+      }
+      parts.unshift(sel);
+    }
+    return parts.join(' > ');
+  };
+
+  // Currency-tagged short texts → price candidates (with a class hint, so the model can pick a
+  // class-based selector that generalises across the site's products rather than a brittle nth path).
+  const priceCandidates = [];
+  const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+  let el;
+  while ((el = tw.nextNode())) {
+    if (priceCandidates.length >= 25) break;
+    const own = Array.from(el.childNodes).filter((c) => c.nodeType === 3).map((c) => c.textContent).join(' ').replace(/\s+/g, ' ').trim();
+    if (!own || own.length > 24) continue;
+    if (!curOf(own) || !NUM.test(own)) continue;
+    let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }
+    priceCandidates.push({ selector: cssPath(el), cls: String(el.className || '').slice(0, 60) || null, text: own, fontSize: fs, struck: isStruck(el) });
+  }
+
+  // Buy / out-of-stock looking controls.
+  const OOS = /sold\s?out|out of stock|notify me|currently unavailable|esaurito|non disponibile|avvisami|ausverkauft|wyprzedane|rupture de stock|épuisé|indisponible/i;
+  const BUY = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|dodaj do koszyka|ajouter au panier/i;
+  const buttons = [];
+  for (const b of document.querySelectorAll('button, input[type=submit], input[type=button], [role=button], a.button, a.btn')) {
+    if (buttons.length >= 20) break;
+    const label = (b.innerText || b.value || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    if (!label || label.length > 40) continue;
+    if (!OOS.test(label) && !BUY.test(label)) continue;
+    buttons.push({ selector: cssPath(b), cls: String(b.className || '').slice(0, 60) || null, text: label, disabled: !!(b.disabled || b.getAttribute('aria-disabled') === 'true') });
+  }
+
+  // Whitelisted e-commerce globals (GTM dataLayer & friends), JSON-trimmed.
+  const globals = {};
+  for (const k of ['dataLayer', 'ecomm_items', 'ecommerceData', 'gtag', 'productData', 'product', '__NEXT_DATA__']) {
+    try {
+      const v = window[k];
+      if (v == null || typeof v === 'function') continue;
+      globals[k] = JSON.parse(JSON.stringify(v));
+    } catch { /* circular / not serialisable */ }
+  }
+  const globalsStr = JSON.stringify(globals).slice(0, 6000);
+
+  const areaText = selector ? (() => { try { const e = document.querySelector(selector); return e ? (e.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 2000) : null; } catch { return null; } })() : null;
+
+  return {
+    url: location.href,
+    host: location.hostname,
+    title: document.title || null,
+    priceCandidates,
+    buttons,
+    globals: globalsStr,
+    areaText,
+    textSkeleton: (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 1500)
+  };
+}
+
+// ---- injected: run a cached recipe against the rendered page (MAIN world) ----
+// Returns { price, currency, availability } — any field null if the recipe didn't resolve it.
+export function applyRecipe(recipe) {
+  const out = { price: null, currency: null, availability: null };
+  if (!recipe || typeof recipe !== 'object') return out;
+
+  const pickPrice = (v) => {
+    if (v == null) return null;
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    let s = String(v).trim().replace(/[^\d.,]/g, '');
+    if (!s) return null;
+    if (s.includes(',') && s.includes('.')) s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+    else if (s.includes(',')) s = /,\d{1,2}$/.test(s) ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+    const n = Number(s);
+    return isFinite(n) ? n : null;
+  };
+  const text = (sel, attr) => { try { const e = document.querySelector(sel); if (!e) return null; return (attr ? e.getAttribute(attr) : e.textContent || '').trim(); } catch { return null; } };
+  const exists = (sel) => { try { return !!sel && !!document.querySelector(sel); } catch { return false; } };
+  const readGlobal = (path) => {
+    try {
+      let cur = window;
+      for (const seg of String(path).split('.')) { if (cur == null) return null; cur = cur[seg]; }
+      return cur;
+    } catch { return null; }
+  };
+
+  // price
+  if (recipe.price_global) out.price = pickPrice(readGlobal(recipe.price_global));
+  if (out.price == null && recipe.price_selector) out.price = pickPrice(text(recipe.price_selector, recipe.price_attr));
+
+  // currency
+  if (recipe.currency_code) out.currency = String(recipe.currency_code).toUpperCase().slice(0, 3);
+  if (!out.currency && recipe.currency_selector) {
+    const t = text(recipe.currency_selector);
+    if (t) out.currency = /€|\bEUR\b/i.test(t) ? 'EUR' : /\$|\bUSD\b/i.test(t) ? 'USD' : /£|\bGBP\b/i.test(t) ? 'GBP' : /zł|\bPLN\b/i.test(t) ? 'PLN' : /\bCHF\b/i.test(t) ? 'CHF' : null;
+  }
+
+  // availability — out-of-stock signals take priority over in-stock ones.
+  if (recipe.out_of_stock_selector && exists(recipe.out_of_stock_selector)) out.availability = 'OutOfStock';
+  else if (recipe.out_of_stock_text) {
+    const body = (document.body?.innerText || '').toLowerCase();
+    if (body.includes(String(recipe.out_of_stock_text).toLowerCase())) out.availability = 'OutOfStock';
+  }
+  if (out.availability == null && recipe.in_stock_selector && exists(recipe.in_stock_selector)) out.availability = 'InStock';
+
+  return out;
+}
+
+// ---- service-worker side: local recipe cache (keyed by normalised host) ----
+export function recipeHost(url) {
+  try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return null; }
+}
+
+export async function getRecipe(url) {
+  const host = recipeHost(url);
+  if (!host) return null;
+  const { recipes } = await chrome.storage.local.get('recipes');
+  return (recipes && recipes[host]) || null;
+}
+
+export async function putRecipe(url, recipe) {
+  const host = recipeHost(url);
+  if (!host || !recipe) return;
+  const { recipes } = await chrome.storage.local.get('recipes');
+  const next = recipes || {};
+  next[host] = { ...recipe, host, cachedAt: Date.now() };
+  await chrome.storage.local.set({ recipes: next });
+}
+
+// ---- service-worker side: ask the worker to derive (or return the cached) recipe ----
+export async function deriveRecipe({ workerUrl, token, url, snapshot, force }) {
+  if (!workerUrl || !token) return null;
+  const endpoint = workerUrl.replace(/\/+$/, '') + '/recipe';
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+    body: JSON.stringify({ host: recipeHost(url), url, snapshot, force: !!force })
+  });
+  if (!res.ok) throw new Error('recipe worker HTTP ' + res.status);
+  const data = await res.json().catch(() => ({}));
+  return data.recipe || null;
+}

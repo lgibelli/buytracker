@@ -5,7 +5,11 @@ const DEFAULT_SETTINGS = {
   model: 'claude-haiku-4-5',
   apiKey: '',
   defaultIntervalMin: 360, // 6h — these are non-urgent buys
-  useLlmFallback: true
+  useLlmFallback: true,
+  // Optional recipe-derivation worker (see worker/). When both are set, sites the generic extractors
+  // can't parse get a per-site recipe derived once and cached, instead of an LLM call every check.
+  workerUrl: '',
+  workerToken: ''
 };
 
 export async function getSettings() {

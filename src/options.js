@@ -12,6 +12,8 @@ async function load() {
   $('model').value = s.model || 'claude-haiku-4-5';
   $('useLlmFallback').checked = s.useLlmFallback !== false;
   $('defaultIntervalMin').value = String(s.defaultIntervalMin || 360);
+  $('workerUrl').value = s.workerUrl || '';
+  $('workerToken').value = s.workerToken || '';
 }
 
 $('save').addEventListener('click', async () => {
@@ -19,11 +21,28 @@ $('save').addEventListener('click', async () => {
     apiKey: $('apiKey').value.trim(),
     model: $('model').value,
     useLlmFallback: $('useLlmFallback').checked,
-    defaultIntervalMin: Number($('defaultIntervalMin').value)
+    defaultIntervalMin: Number($('defaultIntervalMin').value),
+    workerUrl: $('workerUrl').value.trim().replace(/\/+$/, ''),
+    workerToken: $('workerToken').value.trim()
   });
   statusEl.textContent = 'Saved ✓';
   statusEl.style.color = '#34d399';
   setTimeout(() => (statusEl.textContent = ''), 2000);
+});
+
+$('testWorker').addEventListener('click', async () => {
+  const ws = $('workerStatus');
+  const url = $('workerUrl').value.trim().replace(/\/+$/, '');
+  const token = $('workerToken').value.trim();
+  if (!url || !token) { ws.textContent = 'enter URL + token first'; ws.style.color = '#f0c674'; return; }
+  ws.textContent = 'testing…'; ws.style.color = '#8b97a4';
+  try {
+    // GET with a throwaway host: 404 = reachable & authed (just no recipe), 401 = bad token.
+    const res = await fetch(`${url}/recipe?host=connectivity-check.invalid`, { headers: { authorization: 'Bearer ' + token } });
+    if (res.status === 404) { ws.textContent = 'worker reachable, token OK ✓'; ws.style.color = '#34d399'; }
+    else if (res.status === 401) { ws.textContent = 'token rejected (401)'; ws.style.color = '#f87171'; }
+    else { ws.textContent = `unexpected HTTP ${res.status}`; ws.style.color = '#f87171'; }
+  } catch (e) { ws.textContent = 'cannot reach worker'; ws.style.color = '#f87171'; console.warn(e); }
 });
 
 $('test').addEventListener('click', async () => {

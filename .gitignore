@@ -6,3 +6,8 @@
 
 # Build artifact (Chrome Web Store package)
 buytracker.zip
+
+# Cloudflare Worker local secrets + deps
+worker/.dev.vars
+worker/node_modules/
+worker/.wrangler/
