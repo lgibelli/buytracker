@@ -7,7 +7,7 @@ compatibility_date = "2026-06-01"
 #   wrangler kv namespace create RECIPES
 [[kv_namespaces]]
 binding = "RECIPES"
-id = "PASTE_KV_NAMESPACE_ID_HERE"
+id = "bdfacf3797584743a270c2c6211a84b6"
 
 [vars]
 # Default model for recipe derivation. Override per-deploy if you like.
