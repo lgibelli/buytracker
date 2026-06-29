@@ -123,6 +123,47 @@ export function capturePage(selector) {
     else if (!product) product = { name: document.title || null, price: null, currency: null, availability: 'InStock' };
   }
 
+  // Price fallback for stores that render the price client-side with NO JSON-LD (the offer lives only
+  // in DOM text — e.g. LordGun). The SELLING price is a currency-tagged amount that is NOT struck
+  // through; list/old prices carry a <del>/<s>/<strike>, a line-through style, or an *-old/was/
+  // compare/listino class. Runs only when the structured path found no price, so it never overrides
+  // JSON-LD or the Shopify .js data. Pick the most prominent (largest-font) live amount; cheapest ties.
+  if (!product || product.price == null) {
+    const curOf = (s) => /€|\bEUR\b/i.test(s) ? 'EUR' : /\$|\bUSD\b/i.test(s) ? 'USD' : /£|\bGBP\b/i.test(s) ? 'GBP' : /zł|\bPLN\b/i.test(s) ? 'PLN' : /\bCHF\b/i.test(s) ? 'CHF' : null;
+    const NUM = /(\d{1,3}(?:[.\s ]?\d{3})*(?:[.,]\d{2}))/;
+    const STRUCK = /\b(old|was|strike|compare|regular|original|listino|previous|vecchio|barrat|precedente)\b/i;
+    const isStruck = (el) => {
+      for (let p = el, i = 0; p && i < 4; p = p.parentElement, i++) {
+        if (p.tagName === 'DEL' || p.tagName === 'S' || p.tagName === 'STRIKE') return true;
+        if (STRUCK.test(String(p.className || ''))) return true;
+        try { if (getComputedStyle(p).textDecorationLine.includes('line-through')) return true; } catch { /* noop */ }
+      }
+      return false;
+    };
+    const cands = [];
+    const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+    let el;
+    while ((el = tw.nextNode())) {
+      const own = Array.from(el.childNodes).filter((c) => c.nodeType === 3).map((c) => c.textContent).join(' ').replace(/\s+/g, ' ').trim();
+      if (!own || own.length > 24) continue;     // a bare price label, not a sentence that mentions a number
+      const cur = curOf(own);
+      if (!cur) continue;
+      const m = NUM.exec(own);
+      if (!m) continue;
+      const val = pickPrice(m[1]);
+      if (val == null || val <= 0) continue;
+      let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }
+      cands.push({ val, cur, struck: isStruck(el), fs });
+    }
+    const live = cands.filter((c) => !c.struck);
+    const pick = (live.length ? live : cands).sort((a, b) => b.fs - a.fs || a.val - b.val)[0];
+    if (pick) {
+      if (!product) product = { name: document.title || null, price: null, currency: null, availability: null };
+      product.price = pick.val;
+      if (!product.currency) product.currency = pick.cur;
+    }
+  }
+
   let areaText = null;
   if (selector) {
     try {

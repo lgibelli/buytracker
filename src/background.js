@@ -159,7 +159,10 @@ async function computeFrom(ex, watch, settings, forceLlm) {
       });
       if (price == null) price = r.price ?? null;
       currency = r.currency || currency;
-      availability = r.availability || availability;
+      // The LLM only FILLS a missing availability — it must never override a deterministic one. The
+      // rendered buy box ("Add to cart" enabled / "sold out") reflects the selected variant far more
+      // reliably than the model reading page text, which was flipping in-stock items to "out of stock".
+      if (availability == null) availability = r.availability || null;
       newOffer = !!r.new_offer;
       summary = r.summary || null;
     } catch (e) { llmError = 'llm: ' + String(e.message || e); }
@@ -277,18 +280,29 @@ async function checkWatch(watch) {
     let force = areaOk && !!watch.selector && !!ex.textHash && ex.textHash !== watch.lastAreaHash;
     let res = await computeFrom(ex, watch, settings, force);
 
-    // Escalate to a real tab when blocked, or when we got no usable signal for this watch type.
-    const availEnough = watch.watchType === 'availability' && res.availability != null;
-    if ((ex.status === 'blocked' || (res.price == null && !availEnough)) && !ex.viaTab && watch.fetchMode !== 'fetch') {
+    // Escalate to a real tab when blocked, or when the static fetch lacks a signal this watch needs.
+    // A tab renders client-side price/stock (and runs the buy-box heuristic) that a raw fetch can't
+    // see — many stores expose nothing without JS (no JSON-LD, price/availability injected later).
+    const needPrice = watch.watchType !== 'availability';
+    const needAvail = watch.watchType !== 'price';
+    const missing = (needPrice && res.price == null) || (needAvail && res.availability == null);
+    // A blind static fetch (no price, no availability, no structured data) is uninformative for this
+    // URL, so allow escalation even from sticky 'fetch' mode — that mode only meant to stop redundant
+    // tabs when the fetch already yields data, not to strand a JS-only page on an empty result.
+    const staticBlind = res.price == null && res.availability == null && !ex.hasStructuredPrice;
+    if ((ex.status === 'blocked' || missing) && !ex.viaTab && (watch.fetchMode !== 'fetch' || staticBlind)) {
       const ex2 = await extractViaTab(watch.url, watch.selector);
       if (ex2.status === 'ok') {
         const wasBlocked = ex.status === 'blocked';
         const areaOk2 = !watch.selector || !!ex2.areaText;
         const res2 = await computeFrom(ex2, watch, settings, areaOk2 && !!watch.selector && ex2.textHash !== watch.lastAreaHash);
-        if (wasBlocked || res2.price != null || ex2.hasStructuredPrice) {
+        // Adopt the tab if it yields ANY usable signal — a deterministic availability (buy box) counts,
+        // not just a price, so a no-JSON-LD page that only renders stock state isn't thrown away.
+        const tabUseful = res2.price != null || ex2.hasStructuredPrice || res2.availability != null;
+        if (wasBlocked || tabUseful) {
           ex = ex2; res = res2; watch.fetchMode = 'tab';
-        } else {
-          watch.fetchMode = 'fetch'; // the tab saw nothing the fetch didn't — stop paying for a tab each check
+        } else if (!staticBlind) {
+          watch.fetchMode = 'fetch'; // the fetch already had data and the tab added nothing — stop paying for a tab
         }
       }
     }
