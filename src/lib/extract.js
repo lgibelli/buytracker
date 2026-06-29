@@ -30,6 +30,8 @@ export function parsePrice(v) {
   } else if (s.includes(',')) {
     if (/,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
     else s = s.replace(/,/g, '');
+  } else if (/^\d{1,3}(?:\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, ''); // dot-only thousands: "1.299" → 1299 (not 1.299)
   }
   const n = Number(s);
   return isFinite(n) ? n : null;

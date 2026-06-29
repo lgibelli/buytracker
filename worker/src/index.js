@@ -48,11 +48,19 @@ const cors = (origin) => ({
 const json = (obj, status, origin) =>
   new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json', ...cors(origin) } });
 
+// Length-independent constant-time string compare, so the auth gate doesn't leak the token byte by
+// byte via early-exit timing.
+function timingSafeEqual(a, b) {
+  a = String(a); b = String(b);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i % b.length);
+  return diff === 0;
+}
+
 function authed(req, env) {
   if (!env.AUTH_TOKEN) return false; // refuse to run open if no token is configured
-  const h = req.headers.get('authorization') || '';
-  const m = /^Bearer\s+(.+)$/i.exec(h);
-  return !!m && m[1] === env.AUTH_TOKEN;
+  const m = /^Bearer\s+(.+)$/i.exec(req.headers.get('authorization') || '');
+  return !!m && timingSafeEqual(m[1], env.AUTH_TOKEN);
 }
 
 function normalizeHost(h) {
@@ -135,7 +143,9 @@ export default {
 
     let payload;
     try { payload = await req.json(); } catch { return json({ error: 'bad json' }, 400, origin); }
-    const host = normalizeHost(payload.host || (payload.url && new URL(payload.url).hostname));
+    let rawHost = payload.host;
+    if (!rawHost && payload.url) { try { rawHost = new URL(payload.url).hostname; } catch { /* malformed → 400 below */ } }
+    const host = normalizeHost(rawHost);
     if (!host) return json({ error: 'host required' }, 400, origin);
 
     if (!payload.force) {

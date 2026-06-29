@@ -166,7 +166,9 @@ async function extractViaTab(url, selector, opts = {}) {
     // Recipes describe the main product; skip them for area watches (which monitor a sub-region).
     const recipesAllowed = !selector;
     const cached = recipesAllowed ? (opts.recipe ?? await getRecipe(url)) : null;
-    if (cached) apply(await runInPage(tab.id, applyRecipe, [cached]));
+    // Non-fatal: a throwing recipe (e.g. bad selector, tab navigated) must not abort the check — fall
+    // through to the generic result + LLM fallback, same as the derivation path below.
+    if (cached) { try { apply(await runInPage(tab.id, applyRecipe, [cached])); } catch (e) { recipeError = 'recipe: ' + String(e.message || e); } }
 
     const need = opts.need || { price: true, avail: true };
     const stillMissing = (need.price && price == null) || (need.avail && !availability);
@@ -338,23 +340,24 @@ async function checkWatch(watch) {
     // A tab renders client-side price/stock (and runs the buy-box heuristic) that a raw fetch can't
     // see — many stores expose nothing without JS (no JSON-LD, price/availability injected later).
     const missing = (needPrice && res.price == null) || (needAvail && res.availability == null);
-    // A blind static fetch (no price, no availability, no structured data) is uninformative for this
-    // URL, so allow escalation even from sticky 'fetch' mode — that mode only meant to stop redundant
-    // tabs when the fetch already yields data, not to strand a JS-only page on an empty result.
-    const staticBlind = res.price == null && res.availability == null && !ex.hasStructuredPrice;
-    if ((ex.status === 'blocked' || missing) && !ex.viaTab && (watch.fetchMode !== 'fetch' || staticBlind)) {
+    // Whether the static fetch already has every signal THIS watch needs. When it doesn't, escalate —
+    // even from sticky 'fetch' mode (that mode only meant to stop redundant tabs when the fetch already
+    // yields the needed data; it must not strand a watch missing, say, availability on a JS-only page).
+    const staticHasNeeded = (!needPrice || res.price != null || ex.hasStructuredPrice) && (!needAvail || res.availability != null);
+    if ((ex.status === 'blocked' || missing) && !ex.viaTab && (watch.fetchMode !== 'fetch' || !staticHasNeeded)) {
       const ex2 = await extractViaTab(watch.url, watch.selector, tabOpts);
       if (ex2.status === 'ok') {
         const wasBlocked = ex.status === 'blocked';
         const areaOk2 = !watch.selector || !!ex2.areaText;
         const res2 = await computeFrom(ex2, watch, settings, areaOk2 && !!watch.selector && ex2.textHash !== watch.lastAreaHash);
-        // Adopt the tab if it yields ANY usable signal — a deterministic availability (buy box) counts,
-        // not just a price, so a no-JSON-LD page that only renders stock state isn't thrown away.
-        const tabUseful = res2.price != null || ex2.hasStructuredPrice || res2.availability != null;
+        // Adopt the tab only if it supplies a signal THIS watch actually needs — a deterministic
+        // availability (buy box) counts for an availability watch, a price for a price watch — so we
+        // don't replace a good static result with a tab that happened to read an irrelevant signal.
+        const tabUseful = (needPrice && (res2.price != null || ex2.hasStructuredPrice)) || (needAvail && res2.availability != null);
         if (wasBlocked || tabUseful) {
           ex = ex2; res = res2; watch.fetchMode = 'tab';
-        } else if (!staticBlind) {
-          watch.fetchMode = 'fetch'; // the fetch already had data and the tab added nothing — stop paying for a tab
+        } else if (staticHasNeeded) {
+          watch.fetchMode = 'fetch'; // the fetch already had the needed data and the tab added nothing — stop paying for a tab
         }
       }
     }

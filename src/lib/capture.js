@@ -12,6 +12,8 @@ export function capturePage(selector) {
       s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
     } else if (s.includes(',')) {
       s = /,\d{1,2}$/.test(s) ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+    } else if (/^\d{1,3}(?:\.\d{3})+$/.test(s)) {
+      s = s.replace(/\./g, ''); // dot-only thousands: "1.299" → 1299
     }
     const n = Number(s);
     return isFinite(n) ? n : null;
@@ -130,7 +132,9 @@ export function capturePage(selector) {
   // JSON-LD or the Shopify .js data. Pick the most prominent (largest-font) live amount; cheapest ties.
   if (!product || product.price == null) {
     const curOf = (s) => /€|\bEUR\b/i.test(s) ? 'EUR' : /\$|\bUSD\b/i.test(s) ? 'USD' : /£|\bGBP\b/i.test(s) ? 'GBP' : /zł|\bPLN\b/i.test(s) ? 'PLN' : /\bCHF\b/i.test(s) ? 'CHF' : null;
-    const NUM = /(\d{1,3}(?:[.\s ]?\d{3})*(?:[.,]\d{2}))/;
+    // Cents optional so whole-number prices ($29, 199, 1,299) are not missed.
+    const NUM = /(\d{1,3}(?:[.\s]?\d{3})*(?:[.,]\d{2})?)/;
+    const CUR_TOK = /€|\$|£|zł|CHF|EUR|USD|GBP|PLN/gi;
     const STRUCK = /\b(old|was|strike|compare|regular|original|listino|previous|vecchio|barrat|precedente)\b/i;
     const isStruck = (el) => {
       for (let p = el, i = 0; p && i < 4; p = p.parentElement, i++) {
@@ -144,10 +148,13 @@ export function capturePage(selector) {
     const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
     let el;
     while ((el = tw.nextNode())) {
-      const own = Array.from(el.childNodes).filter((c) => c.nodeType === 3).map((c) => c.textContent).join(' ').replace(/\s+/g, ' ').trim();
+      // textContent (not just direct text nodes) so split currency/amount spans read as one price.
+      const own = (el.textContent || '').replace(/\s+/g, ' ').trim();
       if (!own || own.length > 24) continue;     // a bare price label, not a sentence that mentions a number
       const cur = curOf(own);
       if (!cur) continue;
+      // Exactly one currency token — skip composite wrappers holding both current + struck price together.
+      if ((own.match(CUR_TOK) || []).length !== 1) continue;
       const m = NUM.exec(own);
       if (!m) continue;
       const val = pickPrice(m[1]);

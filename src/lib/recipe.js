@@ -9,7 +9,8 @@
 
 // ---- injected: reduce a rendered page to a small snapshot for the LLM ----
 export function buildSnapshot(selector) {
-  const NUM = /(\d{1,3}(?:[.\s ]?\d{3})*(?:[.,]\d{2}))/;
+  const NUM = /(\d{1,3}(?:[.\s]?\d{3})*(?:[.,]\d{2})?)/; // cents optional → whole-number prices too
+  const CUR_TOK = /€|\$|£|zł|CHF|EUR|USD|GBP|PLN/gi;
   const curOf = (s) => /€|\bEUR\b/i.test(s) ? 'EUR' : /\$|\bUSD\b/i.test(s) ? 'USD' : /£|\bGBP\b/i.test(s) ? 'GBP' : /zł|\bPLN\b/i.test(s) ? 'PLN' : /\bCHF\b/i.test(s) ? 'CHF' : null;
   const STRUCK = /\b(old|was|strike|compare|regular|original|listino|previous|vecchio|barrat|precedente)\b/i;
   const isStruck = (el) => {
@@ -45,9 +46,11 @@ export function buildSnapshot(selector) {
   let el;
   while ((el = tw.nextNode())) {
     if (priceCandidates.length >= 25) break;
-    const own = Array.from(el.childNodes).filter((c) => c.nodeType === 3).map((c) => c.textContent).join(' ').replace(/\s+/g, ' ').trim();
+    // textContent so split currency/amount spans read as one price; one currency token only, to skip
+    // composite wrappers that hold both the current and struck price together.
+    const own = (el.textContent || '').replace(/\s+/g, ' ').trim();
     if (!own || own.length > 24) continue;
-    if (!curOf(own) || !NUM.test(own)) continue;
+    if (!curOf(own) || !NUM.test(own) || (own.match(CUR_TOK) || []).length !== 1) continue;
     let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }
     priceCandidates.push({ selector: cssPath(el), cls: String(el.className || '').slice(0, 60) || null, text: own, fontSize: fs, struck: isStruck(el) });
   }
@@ -64,18 +67,36 @@ export function buildSnapshot(selector) {
     buttons.push({ selector: cssPath(b), cls: String(b.className || '').slice(0, 60) || null, text: label, disabled: !!(b.disabled || b.getAttribute('aria-disabled') === 'true') });
   }
 
-  // Whitelisted e-commerce globals (GTM dataLayer & friends), JSON-trimmed.
+  // The snapshot leaves the page (→ the user's worker → Claude), so strip likely PII first: drop
+  // object keys that name personal/cart/customer data and redact emails/phones in free text.
+  const redactText = (s) => String(s || '')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+    .replace(/\b\+?\d[\d\s().-]{8,}\d\b/g, '[phone]');
+  const sanitize = (v, depth = 0) => {
+    if (v == null || depth > 5) return null;
+    if (typeof v === 'string') return redactText(v).slice(0, 300);
+    if (typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.slice(0, 25).map((x) => sanitize(x, depth + 1));
+    const out = {};
+    for (const [k, val] of Object.entries(v)) {
+      if (/email|phone|tel|token|secret|password|passwd|addr|customer|user|account|session|auth/i.test(k)) continue;
+      out[k] = sanitize(val, depth + 1);
+    }
+    return out;
+  };
+
+  // Whitelisted e-commerce globals (GTM dataLayer & friends), sanitised + JSON-trimmed.
   const globals = {};
   for (const k of ['dataLayer', 'ecomm_items', 'ecommerceData', 'gtag', 'productData', 'product', '__NEXT_DATA__']) {
     try {
       const v = window[k];
       if (v == null || typeof v === 'function') continue;
-      globals[k] = JSON.parse(JSON.stringify(v));
+      globals[k] = sanitize(JSON.parse(JSON.stringify(v)));
     } catch { /* circular / not serialisable */ }
   }
   const globalsStr = JSON.stringify(globals).slice(0, 6000);
 
-  const areaText = selector ? (() => { try { const e = document.querySelector(selector); return e ? (e.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 2000) : null; } catch { return null; } })() : null;
+  const areaText = selector ? (() => { try { const e = document.querySelector(selector); return e ? redactText((e.innerText || '').replace(/\s+/g, ' ').trim()).slice(0, 2000) : null; } catch { return null; } })() : null;
 
   return {
     url: location.href,
@@ -85,7 +106,7 @@ export function buildSnapshot(selector) {
     buttons,
     globals: globalsStr,
     areaText,
-    textSkeleton: (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 1500)
+    textSkeleton: redactText((document.body?.innerText || '').replace(/\s+/g, ' ').trim()).slice(0, 1500)
   };
 }
 
@@ -102,6 +123,7 @@ export function applyRecipe(recipe) {
     if (!s) return null;
     if (s.includes(',') && s.includes('.')) s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
     else if (s.includes(',')) s = /,\d{1,2}$/.test(s) ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+    else if (/^\d{1,3}(?:\.\d{3})+$/.test(s)) s = s.replace(/\./g, ''); // dot-only thousands: "1.299" → 1299
     const n = Number(s);
     return isFinite(n) ? n : null;
   };
@@ -142,20 +164,22 @@ export function recipeHost(url) {
   try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return null; }
 }
 
+// One storage key per host — never a shared map — so concurrent checks of different watches can't
+// clobber each other's recipe via read-modify-write of a single object.
+const recipeKey = (host) => 'recipe:' + host;
+
 export async function getRecipe(url) {
   const host = recipeHost(url);
   if (!host) return null;
-  const { recipes } = await chrome.storage.local.get('recipes');
-  return (recipes && recipes[host]) || null;
+  const key = recipeKey(host);
+  const got = await chrome.storage.local.get(key);
+  return got[key] || null;
 }
 
 export async function putRecipe(url, recipe) {
   const host = recipeHost(url);
   if (!host || !recipe) return;
-  const { recipes } = await chrome.storage.local.get('recipes');
-  const next = recipes || {};
-  next[host] = { ...recipe, host, cachedAt: Date.now() };
-  await chrome.storage.local.set({ recipes: next });
+  await chrome.storage.local.set({ [recipeKey(host)]: { ...recipe, host, cachedAt: Date.now() } });
 }
 
 // ---- service-worker side: ask the worker to derive (or return the cached) recipe ----
