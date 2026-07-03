@@ -133,6 +133,24 @@ async function runInPage(tabId, func, args) {
   return result;
 }
 
+// The worker enforces a hard daily derivation budget and answers 429 once it's spent. Park
+// derivation until the quota resets (Retry-After, else next UTC midnight) and tell the user
+// once per day; normal checks keep running, and derivation resumes by itself afterwards.
+async function derivePausedUntil() {
+  const { recipeBudget } = await chrome.storage.local.get('recipeBudget');
+  return recipeBudget?.pausedUntil || 0;
+}
+async function pauseDerivation(retryAfterSec) {
+  const DAY = 86_400_000;
+  const ms = retryAfterSec > 0 ? retryAfterSec * 1000 : (Math.floor(Date.now() / DAY) + 1) * DAY - Date.now();
+  const day = new Date().toISOString().slice(0, 10);
+  const { recipeBudget } = await chrome.storage.local.get('recipeBudget');
+  await chrome.storage.local.set({ recipeBudget: { pausedUntil: Date.now() + ms, notifiedDay: day } });
+  if (recipeBudget?.notifiedDay !== day) {
+    toast('💸 Daily LLM budget reached', 'Recipe derivation is paused until the quota resets. Checks keep running; derivation retries automatically tomorrow.');
+  }
+}
+
 // opts: { recipe, derive, need:{price,avail}, settings } — all optional.
 // A cached per-site recipe is applied on every tab check (deterministic, free). When `derive` is set
 // and a needed signal is still missing, we snapshot the page and ask the worker for a recipe ONCE,
@@ -177,11 +195,22 @@ async function extractViaTab(url, selector, opts = {}) {
     // legitimately-absent signal (e.g. price hidden while out of stock) would re-derive every check.
     const stale = cached && Date.now() - (cached.cachedAt || 0) > RECIPE_STALE_MS;
     if (recipesAllowed && opts.derive && stillMissing && s?.workerUrl && s?.workerToken && (!cached || stale)) {
-      try {
-        const snapshot = await runInPage(tab.id, buildSnapshot, [selector || null]);
-        const fresh = await deriveRecipe({ workerUrl: s.workerUrl, token: s.workerToken, url, snapshot, force: !!cached });
-        if (fresh) { await putRecipe(url, fresh); recipeDerived = true; apply(await runInPage(tab.id, applyRecipe, [fresh])); }
-      } catch (e) { recipeError = 'recipe: ' + String(e.message || e); }
+      if (Date.now() < await derivePausedUntil()) {
+        recipeError = 'recipe: daily LLM budget reached — retrying automatically tomorrow';
+      } else {
+        try {
+          const snapshot = await runInPage(tab.id, buildSnapshot, [selector || null]);
+          const fresh = await deriveRecipe({ workerUrl: s.workerUrl, token: s.workerToken, url, snapshot, force: !!cached });
+          if (fresh) { await putRecipe(url, fresh); recipeDerived = true; apply(await runInPage(tab.id, applyRecipe, [fresh])); }
+        } catch (e) {
+          if (e.status === 429) {
+            await pauseDerivation(e.retryAfterSec);
+            recipeError = 'recipe: daily LLM budget reached — retrying automatically tomorrow';
+          } else {
+            recipeError = 'recipe: ' + String(e.message || e);
+          }
+        }
+      }
     }
 
     return {

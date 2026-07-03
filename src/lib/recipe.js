@@ -183,15 +183,29 @@ export async function putRecipe(url, recipe) {
 }
 
 // ---- service-worker side: ask the worker to derive (or return the cached) recipe ----
+// On failure throws an Error carrying .status (HTTP) and, for 429 (daily budget exhausted),
+// .retryAfterSec — background.js uses these to park derivation until the quota resets.
 export async function deriveRecipe({ workerUrl, token, url, snapshot, force }) {
   if (!workerUrl || !token) return null;
   const endpoint = workerUrl.replace(/\/+$/, '') + '/recipe';
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
-    body: JSON.stringify({ host: recipeHost(url), url, snapshot, force: !!force })
-  });
-  if (!res.ok) throw new Error('recipe worker HTTP ' + res.status);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 45000); // the worker aborts its Anthropic call at 25s
+  let res;
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+      body: JSON.stringify({ host: recipeHost(url), url, snapshot, force: !!force }),
+      signal: ctrl.signal
+    });
+  } finally { clearTimeout(timer); }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || 'recipe worker HTTP ' + res.status);
+    err.status = res.status;
+    err.retryAfterSec = Number(res.headers.get('retry-after')) || Number(body.retry_after) || 0;
+    throw err;
+  }
   const data = await res.json().catch(() => ({}));
   return data.recipe || null;
 }

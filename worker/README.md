@@ -15,10 +15,19 @@ All require `Authorization: Bearer <AUTH_TOKEN>`.
 
 - `POST /recipe` — body `{ host?, url?, snapshot, force? }`. Returns the cached recipe if one exists
   (unless `force:true`), otherwise derives a fresh one from `snapshot`, caches it, and returns it.
+  Snapshots are whitelisted to the fields `buildSnapshot()` produces and size-capped, so the worker
+  can't be repurposed as a general LLM proxy.
 - `GET /recipe?host=<host>` — cached recipe or `404` (warm the extension cache with no LLM call).
 - `DELETE /recipe?host=<host>` — invalidate a stale recipe.
 
 `host` is normalised (lowercased, leading `www.` stripped).
+
+**Daily budget:** derivation spend is metered from real token usage into a KV counter (one global
+counter for the whole worker, keyed by UTC day). Once it reaches `DAILY_BUDGET_USD` (a `[vars]`
+knob in `wrangler.toml`, default `"1"`), `POST /recipe` answers
+`429 {"error":"daily budget exhausted","retry_after":<seconds>}` with a `Retry-After` header until
+UTC midnight. The extension parks derivation until then, notifies you once per day, and resumes
+automatically; price checks themselves keep running throughout.
 
 ## Deploy (run these yourself — they need your Cloudflare login)
 

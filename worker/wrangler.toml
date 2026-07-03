@@ -13,6 +13,10 @@ id = "bdfacf3797584743a270c2c6211a84b6"
 # Default model for recipe derivation. Override per-deploy if you like.
 MODEL = "claude-haiku-4-5"
 
+# Hard daily spend cap (USD) for derivation, metered from real token usage. Once reached, POST
+# /recipe returns 429 with Retry-After until UTC midnight; the extension backs off and retries.
+DAILY_BUDGET_USD = "1"
+
 # Secrets (DO NOT put these here — set them with `wrangler secret put`):
 #   wrangler secret put ANTHROPIC_KEY   # your sk-ant-... key, kept server-side
 #   wrangler secret put AUTH_TOKEN      # a long random string the extension must send
