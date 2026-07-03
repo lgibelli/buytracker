@@ -24,7 +24,7 @@
 </head>
 <body>
   <h1>🛒 BuyTracker — Privacy Policy</h1>
-  <div class="updated">Last updated: 2026-06-16</div>
+  <div class="updated">Last updated: 2026-07-03</div>
 
   <p>BuyTracker does not have a server and does not collect, store, or transmit any
   personal data to the developer.</p>
@@ -41,6 +41,15 @@
   prices and offers. Your API key is stored locally in your browser and is used only to
   authenticate these requests. Anthropic's handling of that data is governed by
   <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener">Anthropic's privacy policy</a>.</p>
+
+  <h2>Optional self-hosted parsing helper</h2>
+  <p>Also <strong>off by default</strong>. BuyTracker can optionally use a small "recipe"
+  service that you deploy yourself on your own Cloudflare account (see the project README).
+  If you configure its URL and token in settings, a reduced snapshot of a page you have
+  chosen to watch — with emails/phone numbers redacted and personal-looking fields
+  stripped — is sent from your browser to <strong>your own</strong> service, which asks
+  Anthropic once per site how to parse it. The developer operates no server and never
+  receives any of this data.</p>
 
   <h2>What we do NOT do</h2>
   <ul>

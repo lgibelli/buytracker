@@ -29,6 +29,7 @@ FEATURES
 • Set your own check interval per item and a target price.
 • Works broadly — uses a site's structured data and a fast path for Shopify stores; falls back to rendering the page when needed.
 • Optional AI offer detection — if you add your own Anthropic (Claude) API key, BuyTracker can spot new discounts on pages that don't expose a clean price. This is off by default and entirely optional.
+• Optional self-hosted helper — power users can deploy a tiny open-source service on their own Cloudflare account that teaches BuyTracker how to parse tricky sites once, then every future check is free and local. Also off by default.
 
 PRIVACY
 • No account, no sign-up, no tracking.
@@ -48,7 +49,7 @@ Monitor product web pages the user chooses and notify them when the price, avail
 
 - **Category:** Shopping
 - **Language:** English
-- **Privacy policy URL:** link to the hosted `privacy.html` (e.g. GitHub Pages)
+- **Privacy policy URL:** `https://buytracker-recipes.nervoso.workers.dev/privacy` (served by the recipe worker from the repo's `privacy.html`)
 
 ## Permission justifications
 
@@ -67,7 +68,7 @@ Monitor product web pages the user chooses and notify them when the price, avail
 
 ## Data-use disclosures (Privacy practices tab)
 
-- **Data collected:** *Website content* only (page text/price is read; transmitted to Anthropic **only** if the user enables the AI fallback with their own key). Nothing else.
+- **Data collected:** *Website content* only (page text/price is read; transmitted to Anthropic **only** if the user enables the AI fallback with their own key, and/or — redacted — to the user's own self-hosted recipe service if they configure one). Nothing else.
 - **Certifications — all three are TRUE:**
   1. I do not sell or transfer user data to third parties outside of approved use cases.
   2. I do not use or transfer user data for purposes unrelated to the item's single purpose.
@@ -75,5 +76,5 @@ Monitor product web pages the user chooses and notify them when the price, avail
 - **Reviewer note:**
 
 ```
-The extension has no backend and collects nothing to the developer. The optional AI fallback is off by default; when the user enables it and supplies their own Anthropic API key, the text of the user's watched page is sent directly from the user's browser to api.anthropic.com to detect offers. The API key is stored locally only.
+The extension has no backend and collects nothing to the developer. The optional AI fallback is off by default; when the user enables it and supplies their own Anthropic API key, the text of the user's watched page is sent directly from the user's browser to api.anthropic.com to detect offers. The API key is stored locally only. Separately and also off by default, the user may self-host an open-source helper service on their own Cloudflare account (URL + token entered in settings); when configured, a PII-redacted snapshot of a watched page is sent to that user-owned endpoint once per site to derive parsing rules. The developer operates neither endpoint and receives no data.
 ```

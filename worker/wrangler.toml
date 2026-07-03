@@ -2,6 +2,10 @@ name = "buytracker-recipes"
 main = "src/index.js"
 compatibility_date = "2026-06-01"
 
+# Lets index.js import the repo-root privacy.html as a string, served at GET /privacy
+# (the public privacy-policy URL for the Chrome Web Store listing).
+rules = [{ type = "Text", globs = ["**/*.html"], fallthrough = true }]
+
 # Per-site parse recipes are cached here, keyed by hostname.
 # Create the namespace once, then paste its id below:
 #   wrangler kv namespace create RECIPES

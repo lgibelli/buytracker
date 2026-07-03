@@ -14,6 +14,8 @@
 // down to the fields buildSnapshot() produces, the output is forced through the emit_recipe tool
 // schema, and derivation is metered by a hard daily budget (DAILY_BUDGET_USD, default $1).
 
+import PRIVACY_HTML from '../../privacy.html';
+
 const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 const ANTHROPIC_TIMEOUT_MS = 25_000;
@@ -162,6 +164,8 @@ export default {
     const origin = req.headers.get('origin') || '*';
 
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(origin) });
+    // Public privacy policy for the Chrome Web Store listing — deliberately unauthenticated.
+    if (url.pathname === '/privacy') return new Response(PRIVACY_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } });
     if (url.pathname !== '/recipe') return json({ error: 'not found' }, 404, origin);
     if (!authed(req, env)) return json({ error: 'unauthorized' }, 401, origin);
 
