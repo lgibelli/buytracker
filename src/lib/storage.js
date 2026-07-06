@@ -24,6 +24,20 @@ export async function setSettings(patch) {
   return next;
 }
 
+// One-off UI/onboarding state (tour seen, dismissed hints). Kept separate from settings
+// so clearing it can't disturb a user's real configuration.
+export async function getUi() {
+  const { ui } = await chrome.storage.local.get('ui');
+  return ui || {};
+}
+
+export async function setUi(patch) {
+  const ui = await getUi();
+  const next = { ...ui, ...patch };
+  await chrome.storage.local.set({ ui: next });
+  return next;
+}
+
 export async function getWatches() {
   const { watches } = await chrome.storage.local.get('watches');
   return watches || {};

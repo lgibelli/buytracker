@@ -4,63 +4,239 @@
   <meta charset="utf-8">
   <title>BuyTracker settings</title>
   <style>
-    body { background:#0b0d10; color:#e6edf3; font:14px/1.5 system-ui,sans-serif; max-width:560px; margin:0 auto; padding:28px 20px; }
-    h1 { font-size:18px; } h2 { font-size:13px; color:#8b97a4; margin-top:24px; text-transform:uppercase; letter-spacing:.04em; }
-    label { display:block; margin:14px 0 4px; }
-    input, select { width:100%; background:#11151a; color:#e6edf3; border:1px solid #2a3340; border-radius:6px; padding:8px; font-size:13px; }
-    input[type=checkbox] { width:auto; }
-    .row { display:flex; align-items:center; gap:8px; margin-top:14px; }
-    .hint { color:#8b97a4; font-size:12px; margin-top:4px; }
-    button { margin-top:20px; background:#1f6feb; color:#fff; border:none; border-radius:6px; padding:9px 16px; cursor:pointer; font-size:13px; }
-    button.ghost { background:#1b222c; border:1px solid #2a3340; margin-left:8px; }
-    #status { margin-left:10px; font-size:12px; }
-    code { background:#11151a; padding:1px 5px; border-radius:4px; }
-    footer { margin-top:32px; padding-top:14px; border-top:1px solid #1b222c; color:#5d6b78; font-size:12px; }
+    :root {
+      --bg:#0b0d10; --panel:#11151a; --raised:#1b222c;
+      --border:#1f2630; --border-2:#2a3340;
+      --ink:#e6edf3; --ink-2:#c3cdd8; --muted:#8b97a4; --faint:#6b7785;
+      --accent:#1f6feb; --accent-hi:#2a7bff; --accent-ink:#9dc3ff;
+      --green:#34d399; --amber:#f0c674; --red:#f87171;
+      --radius:10px;
+    }
+    * { box-sizing:border-box; }
+    body {
+      background:var(--bg); color:var(--ink);
+      font:14px/1.5 -apple-system,system-ui,"Segoe UI",sans-serif;
+      max-width:600px; margin:0 auto; padding:32px 22px 0;
+    }
+    a { color:var(--accent-ink); }
+
+    /* ---- page head ---- */
+    h1 { font-size:19px; font-weight:680; margin:0; display:flex; align-items:center; gap:9px; letter-spacing:-.01em; }
+    .lede { margin:10px 0 0; color:var(--muted); font-size:13px; line-height:1.55; max-width:58ch; }
+
+    /* ---- sections ---- */
+    .section { margin-top:28px; }
+    h2 { font-size:15px; font-weight:640; margin:0; display:flex; align-items:center; gap:10px; }
+    .section-lede { margin:8px 0 0; color:var(--muted); font-size:12.5px; line-height:1.55; max-width:60ch; }
+
+    .pill { font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+      padding:3px 8px; border-radius:999px; line-height:1; white-space:nowrap; }
+    .pill.rec { color:var(--accent-ink); background:rgba(31,111,235,.14); border:1px solid rgba(31,111,235,.42); }
+    .pill.exp { color:var(--amber); background:rgba(240,198,116,.1); border:1px solid #4d3a10; }
+
+    .chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--muted); white-space:nowrap; }
+    .chip .dot { width:7px; height:7px; border-radius:50%; background:var(--faint); flex:none; }
+    .chip.set { color:var(--accent-ink); } .chip.set .dot { background:var(--accent); }
+    .chip.ok  { color:#7fd9b8; }           .chip.ok  .dot { background:var(--green); }
+    .chip.warn{ color:var(--amber); }       .chip.warn .dot { background:var(--amber); }
+    .chip.err { color:#f0a0a0; }            .chip.err .dot { background:var(--red); }
+
+    /* ---- worker hero ---- */
+    .hero { margin-top:14px; background:#0e141d; border:1px solid #23324c; border-radius:var(--radius); padding:16px 18px 4px; }
+    .hero-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+
+    .steps { list-style:none; margin:14px 0 0; padding:0; counter-reset:step; }
+    .step { display:grid; grid-template-columns:30px 1fr; gap:14px; padding:16px 0; }
+    .step + .step { border-top:1px solid #1c2740; }
+    .step::before {
+      counter-increment:step; content:counter(step);
+      width:28px; height:28px; border-radius:50%; display:grid; place-items:center;
+      font-size:13px; font-weight:650; color:var(--accent-ink);
+      background:rgba(31,111,235,.12); border:1px solid rgba(31,111,235,.38);
+    }
+    .step h3 { margin:2px 0 6px; font-size:13px; font-weight:620; }
+    .step .note { color:var(--muted); font-size:12.5px; line-height:1.5; margin:0 0 10px; }
+
+    /* ---- form controls ---- */
+    .field { margin-top:14px; }
+    .field:first-child { margin-top:0; }
+    label { display:block; font-size:12.5px; font-weight:560; color:var(--ink-2); margin:0 0 6px; }
+    input, select {
+      width:100%; background:var(--bg); color:var(--ink);
+      border:1px solid var(--border-2); border-radius:8px; padding:9px 11px;
+      font:inherit; font-size:13px;
+    }
+    input::placeholder { color:#7a8794; }
+    input:focus-visible, select:focus-visible {
+      outline:2px solid rgba(31,111,235,.55); outline-offset:1px; border-color:var(--accent);
+    }
+    .hint { color:var(--muted); font-size:12px; line-height:1.5; margin-top:6px; }
+    code { background:var(--panel); padding:1px 5px; border-radius:4px; font-size:.92em; }
+
+    .check { display:flex; align-items:center; gap:9px; margin-top:16px; }
+    .check input[type=checkbox] { width:16px; height:16px; accent-color:var(--accent); flex:none; }
+    .check label { margin:0; font-weight:560; color:var(--ink); font-size:13px; }
+
+    /* ---- buttons ---- */
+    .btn {
+      display:inline-flex; align-items:center; gap:7px; font:inherit; font-size:13px; font-weight:560;
+      border:1px solid var(--border-2); background:var(--raised); color:var(--ink);
+      border-radius:8px; padding:9px 14px; cursor:pointer; text-decoration:none;
+      transition:background .15s ease, border-color .15s ease;
+    }
+    .btn:hover { background:#232c38; }
+    .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+    .btn.primary:hover { background:var(--accent-hi); border-color:var(--accent-hi); }
+    .btn:focus-visible { outline:2px solid rgba(31,111,235,.65); outline-offset:2px; }
+    .test-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+
+    /* ---- callouts ---- */
+    .callout { background:#10161d; border:1px solid var(--border); border-radius:8px;
+      padding:11px 13px; font-size:12px; color:var(--muted); line-height:1.55; }
+    .callout strong { color:var(--ink-2); font-weight:620; }
+
+    /* ---- experimental disclosure ---- */
+    details.exp { margin-top:28px; border:1px solid var(--border); border-radius:var(--radius); background:var(--panel); }
+    details.exp > summary { list-style:none; cursor:pointer; user-select:none;
+      display:flex; align-items:center; gap:11px; padding:15px 16px; font-size:14px; font-weight:620; }
+    details.exp > summary::-webkit-details-marker { display:none; }
+    .chev { color:var(--muted); display:inline-flex; transition:transform .15s ease; }
+    details.exp[open] .chev { transform:rotate(90deg); }
+    .exp-sub { color:var(--muted); font-weight:450; font-size:12.5px; margin-left:auto; }
+    .exp-body { padding:16px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:14px; }
+
+    /* ---- defaults ---- */
+    .stack { display:flex; flex-direction:column; gap:14px; margin-top:14px; }
+
+    /* ---- sticky save bar ---- */
+    .savebar { position:sticky; bottom:0; margin-top:30px; padding:14px 0 18px;
+      background:linear-gradient(to top, var(--bg) 68%, transparent);
+      display:flex; align-items:center; gap:14px; }
+    .savebar .spacer { flex:1; }
+    #status { font-size:12.5px; min-height:1em; }
+    #ver { color:var(--faint); font-size:11.5px; }
+
+    @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
   </style>
 </head>
 <body>
-  <h1>🛒 BuyTracker settings</h1>
+  <header>
+    <h1>🛒 BuyTracker</h1>
+    <p class="lede">Most stores are read automatically, for free. The options below add coverage for the ones BuyTracker can't parse on its own, so you only set up what you actually need.</p>
+  </header>
 
-  <h2>Smart offer detection (Claude)</h2>
-  <label>Anthropic API key</label>
-  <input id="apiKey" type="password" placeholder="sk-ant-...">
-  <div class="hint">Stored locally in this browser only. Used as a fallback when a page has no structured price. <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#6cb0ff">Get a key →</a></div>
+  <!-- PRIMARY: recipe worker -->
+  <section class="section">
+    <h2>Recipe worker <span class="pill rec">Recommended</span></h2>
+    <p class="section-lede">For stores the built-in reader can't parse. Your worker figures out how to read a site <em>once</em>, caches that recipe, and every later check runs from it, free and with no per-check AI cost.</p>
 
-  <label>Model</label>
-  <select id="model">
-    <option value="claude-haiku-4-5">Claude Haiku 4.5 — cheapest ($1/$5 per Mtok)</option>
-    <option value="claude-sonnet-4-6">Claude Sonnet 4.6 — stronger ($3/$15)</option>
-  </select>
+    <div class="hero">
+      <div class="hero-top">
+        <div style="font-size:12.5px; color:var(--muted);">Self-hosted on Cloudflare, controlled entirely by you.</div>
+        <span class="chip" id="workerConn"><span class="dot"></span>Not set up</span>
+      </div>
 
-  <div class="row"><input id="useLlmFallback" type="checkbox"><label style="margin:0">Enable the LLM fallback</label></div>
+      <ol class="steps">
+        <li class="step">
+          <div>
+            <h3>Deploy the worker</h3>
+            <p class="note">A small Cloudflare Worker you host yourself, on the free plan. The guide walks through it in a few minutes and sets an <code>AUTH_TOKEN</code> you'll paste below.</p>
+            <a class="btn" href="https://github.com/lgibelli/buytracker/tree/main/worker" target="_blank" rel="noopener">Open setup guide →</a>
+          </div>
+        </li>
+        <li class="step">
+          <div>
+            <h3>Connect it</h3>
+            <div class="field">
+              <label for="workerUrl">Worker URL</label>
+              <input id="workerUrl" type="url" placeholder="https://buytracker-recipes.YOUR-SUBDOMAIN.workers.dev">
+            </div>
+            <div class="field">
+              <label for="workerToken">Worker token</label>
+              <input id="workerToken" type="password" placeholder="the AUTH_TOKEN you set on the worker">
+              <p class="hint">Must match the worker's <code>AUTH_TOKEN</code> secret. Sent only to your worker URL, nowhere else.</p>
+            </div>
+          </div>
+        </li>
+        <li class="step">
+          <div>
+            <h3>Test the connection</h3>
+            <p class="note">Confirms the URL is reachable and the token is accepted. Then hit Save.</p>
+            <div class="test-row">
+              <button id="testWorker" class="btn" type="button">Test connection</button>
+              <span id="workerStatus" class="chip"></span>
+            </div>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
 
-  <h2>Recipe worker (optional)</h2>
-  <div class="hint">For stores the built-in extractors can't parse, a Cloudflare Worker can derive a reusable per-site parse recipe <em>once</em> (cached, then run for free on every check) instead of calling the LLM each time. Leave blank to skip. <a href="https://github.com/lgibelli/buytracker/tree/main/worker" target="_blank" style="color:#6cb0ff">Setup →</a></div>
-  <label>Worker URL</label>
-  <input id="workerUrl" type="url" placeholder="https://buytracker-recipes.YOUR-SUBDOMAIN.workers.dev">
-  <label>Worker token</label>
-  <input id="workerToken" type="password" placeholder="the AUTH_TOKEN you set on the worker">
-  <div class="hint">Must match the worker's <code>AUTH_TOKEN</code> secret. Sent only to your worker URL.</div>
-  <div class="row"><button id="testWorker" class="ghost" style="margin-top:10px">Test worker</button><span id="workerStatus"></span></div>
+  <!-- Defaults -->
+  <section class="section">
+    <h2>Defaults</h2>
+    <div class="stack">
+      <div class="field">
+        <label for="defaultIntervalMin">Check interval for new watches</label>
+        <select id="defaultIntervalMin">
+          <option value="60">every 1 hour</option>
+          <option value="180">every 3 hours</option>
+          <option value="360">every 6 hours</option>
+          <option value="720">every 12 hours</option>
+          <option value="1440">once a day</option>
+        </select>
+        <p class="hint">Checks run only while your browser is open (extension-only mode).</p>
+      </div>
+    </div>
+  </section>
 
-  <h2>Defaults</h2>
-  <label>Default check interval for new watches</label>
-  <select id="defaultIntervalMin">
-    <option value="60">every 1 hour</option>
-    <option value="180">every 3 hours</option>
-    <option value="360">every 6 hours</option>
-    <option value="720">every 12 hours</option>
-    <option value="1440">once a day</option>
-  </select>
-  <div class="hint">Checks only run while your browser is open (extension-only mode).</div>
+  <!-- EXPERIMENTAL: direct Claude API -->
+  <details class="exp" id="expClaude">
+    <summary>
+      <span class="chev" aria-hidden="true">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </span>
+      Direct Claude API
+      <span class="pill exp">Experimental</span>
+      <span class="exp-sub">pay-per-check alternative</span>
+    </summary>
+    <div class="exp-body">
+      <p class="callout">Instead of the worker, paste an Anthropic API key and BuyTracker calls Claude directly whenever a page has no structured price. Simplest to switch on, but you pay <strong>per check</strong> rather than once per site. Without either option, unreadable pages just fall back to a plain "this page changed" nudge.</p>
 
-  <div class="row">
-    <button id="save">Save</button>
-    <button id="test" class="ghost">Test API key</button>
+      <div class="field">
+        <label for="apiKey">Anthropic API key</label>
+        <input id="apiKey" type="password" placeholder="sk-ant-...">
+        <p class="hint">Stored locally in this browser only; sent only to Anthropic. <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key →</a></p>
+      </div>
+
+      <div class="field">
+        <label for="model">Model</label>
+        <select id="model">
+          <option value="claude-haiku-4-5">Claude Haiku 4.5 — cheapest ($1/$5 per Mtok)</option>
+          <option value="claude-sonnet-4-6">Claude Sonnet 4.6 — stronger ($3/$15)</option>
+        </select>
+      </div>
+
+      <div class="check">
+        <input id="useLlmFallback" type="checkbox">
+        <label for="useLlmFallback">Enable Claude fallback</label>
+      </div>
+
+      <p class="callout"><strong>Cost:</strong> billed by Anthropic directly, only for checks that use the fallback, structured-price sites stay free. Each call sends ~4k tokens of page text for a tiny reply, so on Haiku it runs well under a cent (~$0.003). A site that never exposes a structured price, checked every 6h, is ~4 calls/day (roughly 1–2¢/day, under $1/month). The recipe worker removes even that.</p>
+
+      <div class="test-row">
+        <button id="test" class="btn" type="button">Test API key</button>
+        <span id="apiStatus" class="chip"></span>
+      </div>
+    </div>
+  </details>
+
+  <div class="savebar">
+    <button id="save" class="btn primary" type="button">Save changes</button>
     <span id="status"></span>
+    <span class="spacer"></span>
+    <span id="ver"></span>
   </div>
-
-  <footer id="ver"></footer>
 
   <script type="module" src="options.js"></script>
 </body>

@@ -5,21 +5,29 @@ body {
   font: 13px/1.4 -apple-system, system-ui, sans-serif;
 }
 header {
-  position: sticky; top: 0; z-index: 2;
-  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 60;
   padding: 10px 12px; background: #0b0d10; border-bottom: 1px solid #1b222c;
 }
-.brand { font-weight: 600; }
-.actions { display: flex; gap: 6px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; }
+.brand { font-weight: 600; font-size: 14px; letter-spacing: -.01em; }
+.tools { display: flex; gap: 6px; }
+.actions { display: flex; gap: 6px; margin-top: 10px; }
+.actions #add { flex: 1; }
 button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   background: #1b222c; color: #e6edf3; border: 1px solid #2a3340;
-  border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 12px;
+  border-radius: 7px; padding: 7px 11px; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 550;
+  transition: background .15s ease, border-color .15s ease;
 }
 button:hover { background: #232c38; }
-button.primary { background: #1f6feb; border-color: #1f6feb; }
-button.primary:hover { background: #2a7bff; }
-.hint { margin: 8px 12px; padding: 8px 10px; background: #1a1407; border: 1px solid #4d3a10; border-radius: 6px; color: #f0c674; font-size: 12px; }
-.hint a { color: #ffd479; }
+button svg { width: 15px; height: 15px; flex: none; }
+button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+button.primary:hover { background: #2a7bff; border-color: #2a7bff; }
+button:focus-visible { outline: 2px solid rgba(31,111,235,.6); outline-offset: 1px; }
+.hicon { padding: 0; width: 32px; height: 32px; color: #b6c2cf; }
+.hicon:hover { color: #e6edf3; }
+.hicon svg { width: 17px; height: 17px; }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } }
 main { padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
 .card { background: #11151a; border: 1px solid #1f2630; border-radius: 8px; padding: 10px; }
 .card .head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
@@ -53,5 +61,41 @@ input.target { width: 78px; }
 .iconbtn:hover { background: #232c38; color: #e6edf3; }
 .iconbtn.danger:hover { background: #3a1d1f; border-color: #4d2526; color: #f87171; }
 .summary { margin-top: 6px; font-size: 11px; color: #9aa7b4; font-style: italic; }
-footer { padding: 16px 14px; color: #7a8794; text-align: center; font-size: 12px; }
+/* Just-in-time hint */
+.tip { margin: 8px 10px 0; padding: 9px 11px; display: flex; align-items: flex-start; gap: 8px;
+  background: #0e141d; border: 1px solid #23324c; border-radius: 8px; font-size: 12px; color: #b6c2cf; line-height: 1.45; }
+.tip svg { width: 15px; height: 15px; flex: none; color: #9dc3ff; margin-top: 1px; }
+.tip a { color: #9dc3ff; text-decoration: none; font-weight: 560; }
+.tip a:hover { text-decoration: underline; }
+.tip-x { margin-left: auto; background: none; border: none; color: #6b7785; cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 2px 3px; flex: none; }
+.tip-x:hover { color: #e6edf3; background: none; }
+
+/* Empty state that teaches the first action */
+.empty { padding: 26px 20px 32px; text-align: center; color: #8b97a4; }
+.empty-mark { font-size: 30px; line-height: 1; }
+.empty-title { color: #e6edf3; font-weight: 640; font-size: 15px; margin-top: 8px; }
+.empty-lede { margin: 6px 0 0; font-size: 12.5px; }
+.empty-ways { list-style: none; margin: 16px auto 0; padding: 0; max-width: 300px;
+  display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.empty-ways li { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: #9aa7b4;
+  background: #11151a; border: 1px solid #1f2630; border-radius: 8px; padding: 9px 11px; }
+.empty-ways b { color: #e6edf3; font-weight: 600; }
+.ew-ico { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; flex: none;
+  background: rgba(31,111,235,.12); border: 1px solid rgba(31,111,235,.3); color: #9dc3ff; }
+.ew-ico svg { width: 14px; height: 14px; }
+
+/* One-time coachmark overlay (header stays above it, so the toolbar reads as highlighted) */
+.tour { position: fixed; inset: 0; z-index: 50; background: rgba(6,8,11,.72);
+  display: flex; align-items: flex-start; justify-content: center; }
+.tour-card { position: relative; margin-top: 96px; width: 300px; background: #141a22;
+  border: 1px solid #2a3340; border-radius: 12px; padding: 16px; box-shadow: 0 14px 44px -14px rgba(0,0,0,.75); }
+.tour-card::before { content: ""; position: absolute; top: -7px; left: 50%; margin-left: -6px;
+  width: 12px; height: 12px; background: #141a22; border-left: 1px solid #2a3340; border-top: 1px solid #2a3340; transform: rotate(45deg); }
+.tour-card h3 { margin: 0 0 6px; font-size: 14px; font-weight: 640; }
+.tour-card p { margin: 0; font-size: 12.5px; color: #9aa7b4; line-height: 1.5; }
+.tour-card p b { color: #e6edf3; font-weight: 600; }
+.tour-go { margin-top: 14px; width: 100%; justify-content: center; }
+
+footer { color: #7a8794; }
 .hidden { display: none; }

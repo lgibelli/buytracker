@@ -1,9 +1,9 @@
-import { getSettings, getWatches, putWatch, deleteWatch } from './lib/storage.js';
+import { getWatches, putWatch, deleteWatch, getSettings, getUi, setUi } from './lib/storage.js';
 import { priceChartSVG } from './lib/chart.js';
 
 const listEl = document.getElementById('list');
 const emptyEl = document.getElementById('empty');
-const hintEl = document.getElementById('hint');
+const tipEl = document.getElementById('tip');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = (n) => (n == null ? '—' : Number.isInteger(n) ? n : n.toFixed(2));
@@ -93,13 +93,40 @@ function card(w) {
 }
 
 async function render() {
-  const [settings, watches] = await Promise.all([getSettings(), getWatches()]);
+  const [watches, settings, ui] = await Promise.all([getWatches(), getSettings(), getUi()]);
   const arr = Object.values(watches).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  hintEl.classList.toggle('hidden', !!settings.apiKey);
-  if (!settings.apiKey) hintEl.innerHTML = 'No Claude API key set — the smart offer-detection fallback is off. <a href="#" id="toOpts">Add one in settings →</a>';
   emptyEl.classList.toggle('hidden', arr.length > 0);
   listEl.innerHTML = arr.map(card).join('');
+
+  // Just-in-time hint: only once a real watch shows a store BuyTracker couldn't read on its own,
+  // and only while neither fallback (worker or Claude key) is configured, and not yet dismissed.
+  const configured = !!(settings.workerUrl && settings.workerToken) || !!settings.apiKey;
+  const hasUnreadable = arr.some((w) => w.lastStatus === 'no_data' || w.lastStatus === 'blocked');
+  tipEl.classList.toggle('hidden', ui.dismissedWorkerHint || configured || !hasUnreadable);
+
+  maybeShowTour(ui);
 }
+
+// First-ever popup open: show a one-time coachmark pointing at the toolbar.
+function maybeShowTour(ui) {
+  if (ui.seenTour) return;
+  document.getElementById('tour').classList.remove('hidden');
+}
+
+document.getElementById('tourGo').addEventListener('click', async () => {
+  document.getElementById('tour').classList.add('hidden');
+  await setUi({ seenTour: true });
+});
+
+document.getElementById('tipSettings').addEventListener('click', (e) => {
+  e.preventDefault();
+  chrome.runtime.openOptionsPage();
+});
+
+document.getElementById('tipX').addEventListener('click', async () => {
+  tipEl.classList.add('hidden');
+  await setUi({ dismissedWorkerHint: true });
+});
 
 async function busy(fn) {
   try { await fn(); } catch (e) { alert(e.message || e); }
@@ -125,7 +152,6 @@ document.getElementById('checkAll').addEventListener('click', () =>
 document.getElementById('opts').addEventListener('click', () => chrome.runtime.openOptionsPage());
 
 document.addEventListener('click', async (e) => {
-  if (e.target.id === 'toOpts') { e.preventDefault(); chrome.runtime.openOptionsPage(); return; }
   const actEl = e.target.closest('[data-act]');
   const card = e.target.closest('.card');
   if (!actEl || !card) return;

@@ -17,7 +17,12 @@ function setupMenus() {
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => { chrome.alarms.create('tick', { periodInMinutes: TICK_MIN, delayInMinutes: 1 }); setupMenus(); });
+chrome.runtime.onInstalled.addListener((details) => {
+  chrome.alarms.create('tick', { periodInMinutes: TICK_MIN, delayInMinutes: 1 });
+  setupMenus();
+  // First install only: open a one-screen welcome tab. Skip it on updates/reloads.
+  if (details.reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome.html') });
+});
 chrome.runtime.onStartup.addListener(() => { chrome.alarms.create('tick', { periodInMinutes: TICK_MIN }); setupMenus(); });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'tick') checkDue().catch((e) => console.warn('tick', e)); });
 
