@@ -13,6 +13,20 @@ rules = [{ type = "Text", globs = ["**/*.html"], fallthrough = true }]
 binding = "RECIPES"
 id = "bdfacf3797584743a270c2c6211a84b6"
 
+# Optional: user "report wrong result" submissions are logged here for you to review later
+# (host, url, the correction, note, outcome, cost). Reporting still works without this binding —
+# the worker skips logging when it's absent, so this stays commented out by default (a placeholder
+# id would fail `wrangler deploy`). To enable: create the DB, UNCOMMENT the block below, paste the
+# printed id, then apply the migration:
+#   wrangler d1 create buytracker-reports
+#   wrangler d1 migrations apply buytracker-reports --remote
+# Review anytime with:  wrangler d1 execute buytracker-reports --remote \
+#   --command "SELECT ts,host,correct_availability,correct_price,note,outcome FROM reports ORDER BY ts DESC LIMIT 50"
+# [[d1_databases]]
+# binding = "REPORTS"
+# database_name = "buytracker-reports"
+# database_id = "PASTE_D1_DATABASE_ID_HERE"
+
 [vars]
 # Default model for recipe derivation. Override per-deploy if you like.
 MODEL = "claude-haiku-4-5"

@@ -71,11 +71,18 @@ function hash(s) {
   return h;
 }
 
-// Map a schema.org / freeform availability string to 'in' | 'out' | null.
-function availState(a) {
+// Single source of truth: map a schema.org ItemAvailability value (or freeform string) to
+// 'in' | 'out' | null. Availability answers "purchasable now?", independent of price. The
+// schema.org enumeration is finite and known, so we classify BOTH directions explicitly and
+// return null for anything we don't recognise — we never guess "out" from an unknown string.
+// Every consumer (change detection here, the popup badge) imports this so they can't drift.
+export function availState(a) {
   const s = String(a || '').toLowerCase().replace(/[^a-z]/g, '');
-  if (/instock|limitedavailability|onlineonly/.test(s)) return 'in';
-  if (/outofstock|soldout|discontinued|preorder|backorder/.test(s)) return 'out';
+  if (!s) return null;
+  // Not buyable now: gone, sold out, or not yet released.
+  if (/outofstock|soldout|discontinued|backorder|preorder|presale/.test(s)) return 'out';
+  // Available now — includes channel-restricted (online/in-store only), limited, and made-to-order.
+  if (/instock|onlineonly|instoreonly|limitedavailability|madetoorder/.test(s)) return 'in';
   return null;
 }
 

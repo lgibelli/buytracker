@@ -98,4 +98,22 @@ input.target { width: 78px; }
 .tour-go { margin-top: 14px; width: 100%; justify-content: center; }
 
 footer { color: #7a8794; }
+
+/* Report-wrong → re-derive form (per card) */
+.report { margin-top: 8px; border-top: 1px solid #1b222c; padding-top: 8px; }
+.report-open { background: none; border: none; color: #9dc3ff; font-size: 11.5px; font-weight: 550; padding: 2px 0; cursor: pointer; }
+.report-open:hover { background: none; text-decoration: underline; }
+.report-form { display: flex; flex-direction: column; gap: 7px; margin-top: 6px; }
+.report-form .seg { display: flex; gap: 6px; }
+.report-form .seg button { flex: 1; padding: 6px 4px; font-size: 11.5px; font-weight: 550; }
+.report-form .seg button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.report-price, .report-note { width: 100%; background: #0b0d10; color: #e6edf3; border: 1px solid #2a3340;
+  border-radius: 7px; padding: 7px 9px; font: inherit; font-size: 12px; }
+.report-price::placeholder, .report-note::placeholder { color: #6b7785; }
+.report-row { display: flex; align-items: center; gap: 9px; }
+.report-status { font-size: 11.5px; color: #9aa7b4; }
+.report-status.ok { color: #7fd9b8; }
+.report-status.warn { color: #f0c674; }
+.report-status.err { color: #f0a0a0; }
+
 .hidden { display: none; }

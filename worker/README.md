@@ -13,14 +13,24 @@ stays in the extension rather than moving to the worker.
 
 All require `Authorization: Bearer <AUTH_TOKEN>`.
 
-- `POST /recipe` — body `{ host?, url?, snapshot, force? }`. Returns the cached recipe if one exists
-  (unless `force:true`), otherwise derives a fresh one from `snapshot`, caches it, and returns it.
-  Snapshots are whitelisted to the fields `buildSnapshot()` produces and size-capped, so the worker
-  can't be repurposed as a general LLM proxy.
+- `POST /recipe` — body `{ host?, url?, snapshot, force?, feedback? }`. Returns the cached recipe if
+  one exists (unless `force:true`), otherwise derives a fresh one from `snapshot`, caches it, and
+  returns it. Snapshots are whitelisted to the fields `buildSnapshot()` produces and size-capped, so
+  the worker can't be repurposed as a general LLM proxy. `feedback` (from a user "report wrong
+  result") is `{ correct_availability?: 'in'|'out', correct_price?: number, note?: string }`; when
+  present it forces a re-derivation and is passed to the model as a trusted correction (the free-text
+  `note` is treated as data, never instructions).
 - `GET /recipe?host=<host>` — cached recipe or `404` (warm the extension cache with no LLM call).
 - `DELETE /recipe?host=<host>` — invalidate a stale recipe.
+- `GET /reports?limit=&host=` — the user-report log (most recent first) for review. Requires the
+  optional `REPORTS` D1 binding; returns `501` if it isn't configured.
 
 `host` is normalised (lowercased, leading `www.` stripped).
+
+**User reports:** when the `REPORTS` D1 binding is configured, each "report wrong result" that
+reaches derivation is logged (host, url, the correction, note, outcome, cost) for you to review via
+`GET /reports` or `wrangler d1 execute`. It's optional — without the binding, reports still re-derive
+recipes, they just aren't logged.
 
 **Daily budget:** derivation spend is metered from real token usage into a KV counter (one global
 counter for the whole worker, keyed by UTC day). Once it reaches `DAILY_BUDGET_USD` (a `[vars]`
@@ -44,7 +54,13 @@ wrangler secret put ANTHROPIC_KEY   # your sk-ant-... key
 wrangler secret put AUTH_TOKEN      # a long random string; paste the SAME value into the
                                     # extension options ("Recipe worker token")
 
-# 3. Ship it.
+# 3. (Optional) Enable the user-report log: create the D1 DB, then UNCOMMENT the [[d1_databases]]
+#    block in wrangler.toml and paste the printed database_id, then apply the migration.
+#    Skip this entirely to leave report logging off (reports still re-derive recipes).
+wrangler d1 create buytracker-reports
+wrangler d1 migrations apply buytracker-reports --remote
+
+# 4. Ship it.
 wrangler deploy
 ```
 

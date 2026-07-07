@@ -1,4 +1,4 @@
-import { getWatches, putWatch, deleteWatch, getSettings, getUi, setUi } from './lib/storage.js';
+import { getWatches, putWatch, deleteWatch, getSettings, getUi, setUi, availState } from './lib/storage.js';
 import { priceChartSVG } from './lib/chart.js';
 
 const listEl = document.getElementById('list');
@@ -40,11 +40,10 @@ function statusBadge(w) {
   return `<span class="badge ${esc(s)}" title="${esc(w.lastError || '')}">${label}</span>`;
 }
 
-// 'in' | 'out' | null (unknown) — single source of truth for stock state.
-function stockState(w) {
-  if (!w.lastAvailability) return null;
-  return /instock|in stock|limited/i.test(w.lastAvailability) ? 'in' : 'out';
-}
+// 'in' | 'out' | null (unknown). Delegates to the canonical availState in storage.js so the popup
+// can never diverge from how the history/notification layer classifies the same string — the exact
+// bug where a schema.org `OnlineOnly` (in stock) was shown as "out of stock".
+const stockState = (w) => availState(w.lastAvailability);
 
 function availBadge(w) {
   const s = stockState(w);
@@ -88,6 +87,22 @@ function card(w) {
       </div>
       <div class="chart">${priceChartSVG(w.history, { currency: cur, width: 358, height: 110 })}</div>
       ${w.lastSummary ? `<div class="summary">“${esc(w.lastSummary)}”</div>` : ''}
+      ${w.selector ? '' : `<div class="report">
+        <button class="report-open" data-act="report-open" type="button">Wrong result? Report &amp; fix</button>
+        <div class="report-form hidden">
+          <div class="seg">
+            <button type="button" data-act="report-choice" data-fb="in">In stock</button>
+            <button type="button" data-act="report-choice" data-fb="out">Out of stock</button>
+            <button type="button" data-act="report-choice" data-fb="price">Wrong price</button>
+          </div>
+          <input class="report-price hidden" type="number" step="0.01" inputmode="decimal" placeholder="correct price">
+          <input class="report-note" type="text" maxlength="300" placeholder="optional hint: where should it look? (e.g. the price on the right)">
+          <div class="report-row">
+            <button class="report-submit primary" data-act="report-submit" type="button">Submit &amp; re-derive</button>
+            <span class="report-status"></span>
+          </div>
+        </div>
+      </div>`}
     </div>
   </div>`;
 }
@@ -133,6 +148,36 @@ async function busy(fn) {
   await render();
 }
 
+// Send a user correction for a watch → the worker LLM re-derives the site's recipe, then the watch
+// is re-checked. Can take ~40s (tab + LLM); the SW finishes even if the popup closes meanwhile.
+async function submitReport(card, id) {
+  const form = card.querySelector('.report-form');
+  const statusEl = form.querySelector('.report-status');
+  const choice = form.dataset.choice || null;
+  const note = form.querySelector('.report-note').value.trim();
+  const feedback = { note: note || null };
+  if (choice === 'in' || choice === 'out') feedback.correct_availability = choice;
+  else if (choice === 'price') {
+    const p = parseFloat(form.querySelector('.report-price').value);
+    if (isFinite(p)) feedback.correct_price = p;
+  }
+  if (!feedback.correct_availability && feedback.correct_price == null && !feedback.note) {
+    statusEl.className = 'report-status warn'; statusEl.textContent = 'Pick what’s wrong, or add a note.';
+    return;
+  }
+  const btn = form.querySelector('.report-submit');
+  btn.disabled = true;
+  statusEl.className = 'report-status'; statusEl.textContent = 're-deriving… (you can close this)';
+  try {
+    const r = await chrome.runtime.sendMessage({ type: 'reportWrong', id, feedback });
+    if (!r?.ok) throw new Error(r?.error || 'failed to re-derive');
+    await render(); // reflects the corrected check
+  } catch (e) {
+    btn.disabled = false;
+    statusEl.className = 'report-status err'; statusEl.textContent = e.message || String(e);
+  }
+}
+
 document.getElementById('add').addEventListener('click', () =>
   busy(async () => {
     const r = await chrome.runtime.sendMessage({ type: 'addCurrentTab' });
@@ -163,6 +208,21 @@ document.addEventListener('click', async (e) => {
     if (card.classList.contains('collapsed')) expanded.delete(id); else expanded.add(id);
     return;
   }
+
+  // Report-wrong form is pure DOM until Submit — handle it before touching storage.
+  if (act === 'report-open') {
+    actEl.classList.add('hidden');
+    card.querySelector('.report-form').classList.remove('hidden');
+    return;
+  }
+  if (act === 'report-choice') {
+    const form = card.querySelector('.report-form');
+    form.dataset.choice = actEl.dataset.fb;
+    form.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('active', b === actEl));
+    form.querySelector('.report-price').classList.toggle('hidden', actEl.dataset.fb !== 'price');
+    return;
+  }
+  if (act === 'report-submit') { await submitReport(card, id); return; }
 
   const watches = await getWatches();
   const w = watches[id];

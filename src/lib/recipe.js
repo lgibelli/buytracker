@@ -185,7 +185,7 @@ export async function putRecipe(url, recipe) {
 // ---- service-worker side: ask the worker to derive (or return the cached) recipe ----
 // On failure throws an Error carrying .status (HTTP) and, for 429 (daily budget exhausted),
 // .retryAfterSec — background.js uses these to park derivation until the quota resets.
-export async function deriveRecipe({ workerUrl, token, url, snapshot, force }) {
+export async function deriveRecipe({ workerUrl, token, url, snapshot, force, feedback }) {
   if (!workerUrl || !token) return null;
   const endpoint = workerUrl.replace(/\/+$/, '') + '/recipe';
   const ctrl = new AbortController();
@@ -195,7 +195,7 @@ export async function deriveRecipe({ workerUrl, token, url, snapshot, force }) {
     res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
-      body: JSON.stringify({ host: recipeHost(url), url, snapshot, force: !!force }),
+      body: JSON.stringify({ host: recipeHost(url), url, snapshot, force: !!force, feedback: feedback || null }),
       signal: ctrl.signal
     });
   } finally { clearTimeout(timer); }

@@ -10,6 +10,21 @@ const path = require("path").resolve(__dirname, "..");
   const fail = (m) => { console.log('FAIL:', m); process.exitCode = 1; };
 
   try {
+    // 0. availState maps the full schema.org ItemAvailability enum (pure unit, no browser).
+    //    Guards the OnlineOnly→"out of stock" regression and keeps popup display == history state.
+    const { availState } = await import(require('url').pathToFileURL(path + '/src/lib/storage.js').href);
+    const AVAIL_CASES = [
+      ['InStock', 'in'], ['OnlineOnly', 'in'], ['InStoreOnly', 'in'], ['LimitedAvailability', 'in'],
+      ['MadeToOrder', 'in'], ['http://schema.org/OnlineOnly', 'in'], ['in stock', 'in'],
+      ['OutOfStock', 'out'], ['SoldOut', 'out'], ['Discontinued', 'out'], ['PreOrder', 'out'],
+      ['PreSale', 'out'], ['BackOrder', 'out'], ['out of stock', 'out'],
+      ['', null], ['unknown', null], [null, null], ['Reserved', null]
+    ];
+    const availBad = AVAIL_CASES.filter(([s, want]) => availState(s) !== want);
+    console.log(availBad.length === 0
+      ? `OK: availState maps all ${AVAIL_CASES.length} enum cases (OnlineOnly→in, unknown→null)`
+      : (fail('availState: ' + availBad.map(([s]) => `${JSON.stringify(s)}→${availState(s)}`).join(', ')), ''));
+
     // 1. Service worker boots (manifest + ES module imports OK)
     let [sw] = ctx.serviceWorkers();
     if (!sw) sw = await ctx.waitForEvent('serviceworker', { timeout: 15000 });

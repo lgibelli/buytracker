@@ -86,10 +86,12 @@ export function capturePage(selector) {
 
   const pageText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 20000);
 
-  // The rendered buy-box reflects the SELECTED variant on any storefront — the most reliable,
-  // vendor-agnostic availability signal. Scope to the add-to-cart form so recommended-product
-  // buttons elsewhere on the page don't pollute it. A confident "sold out" here overrides an
-  // aggregate JSON-LD "in stock" (which describes the product, not the chosen variant).
+  // The rendered buy-box is a vendor-agnostic availability hint. Scope to the add-to-cart form so
+  // recommended-product buttons elsewhere on the page don't pollute it. It's a FALLBACK only: it
+  // fills availability when the structured JSON-LD carried none, and must NOT override an explicit
+  // schema.org value (multilingual keyword matching can't reliably beat one — that's how a live
+  // `OnlineOnly` got flipped to "out of stock"). Genuinely-wrong structured data is corrected by a
+  // learned per-site recipe (applied later) or the user's "report wrong", not by this heuristic.
   const OOS_RE = /sold\s?out|out of stock|notify me|email when available|currently unavailable|temporarily unavailable|esaurito|non disponibile|avvisami|ausverkauft|nicht verfügbar|benachrichtigen|wyprzedane|brak w magazynie|powiadom|rupture de stock|épuisé|indisponible/i;
   const BUY_RE = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|dodaj do koszyka|ajouter au panier/i;
   let buyBox = null;
@@ -117,12 +119,10 @@ export function capturePage(selector) {
     else if (/add to cart|add to bag|add to basket|buy now|in stock/.test(lc)) buyBox = 'InStock';
   }
 
-  if (buyBox === 'OutOfStock') {
-    if (product) product.availability = 'OutOfStock';
-    else product = { name: document.title || null, price: null, currency: null, availability: 'OutOfStock' };
-  } else if (buyBox === 'InStock') {
-    if (product && !product.availability) product.availability = 'InStock';
-    else if (!product) product = { name: document.title || null, price: null, currency: null, availability: 'InStock' };
+  if (!product) {
+    if (buyBox) product = { name: document.title || null, price: null, currency: null, availability: buyBox };
+  } else if (!product.availability && buyBox) {
+    product.availability = buyBox; // fill only — never override a structured schema.org enum
   }
 
   // Price fallback for stores that render the price client-side with NO JSON-LD (the offer lives only

@@ -53,6 +53,7 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
       }
       if (msg.type === 'checkNow') return sendResponse({ ok: true, watch: await checkWatch(await getWatch(msg.id)) });
       if (msg.type === 'checkAll') { await checkDue(true); return sendResponse({ ok: true }); }
+      if (msg.type === 'reportWrong') return sendResponse({ ok: true, watch: await reportWrong(msg.id, msg.feedback) });
       sendResponse({ ok: false, error: 'unknown message' });
     } catch (e) { sendResponse({ ok: false, error: String(e && e.message || e) }); }
   })();
@@ -224,6 +225,43 @@ async function extractViaTab(url, selector, opts = {}) {
       viaTab: true, recipeUsed, recipeDerived, recipeError
     };
   } finally { try { await chrome.tabs.remove(tab.id); } catch { /* gone */ } }
+}
+
+// User-reported wrong result → force-re-derive this host's recipe, feeding the user's correction to
+// the worker LLM as a trusted hint, then re-check the watch so the fix shows immediately. Whole-page
+// watches only (a recipe describes the main product, not an area sub-region). Bypasses the weekly
+// staleness cap on purpose — the user just told us the cached recipe is wrong — but still respects
+// the worker's hard daily budget (429 → park until the quota resets, same as the auto-derive path).
+async function reportWrong(id, feedback) {
+  const watch = await getWatch(id);
+  if (!watch) throw new Error('Watch not found');
+  if (watch.selector) throw new Error('Reporting a wrong result works on whole-page watches, not area watches.');
+  const settings = await getSettings();
+  if (!settings.workerUrl || !settings.workerToken) {
+    throw new Error('Set up the recipe worker in Settings first — that’s what re-derives the fix.');
+  }
+  if (Date.now() < await derivePausedUntil()) {
+    throw new Error('Daily LLM budget reached — re-derivation retries automatically tomorrow.');
+  }
+
+  const tab = await chrome.tabs.create({ url: watch.url, active: false });
+  try {
+    await waitForComplete(tab.id, 35000);
+    await sleep(2500);
+    const snapshot = await runInPage(tab.id, buildSnapshot, [null]);
+    const fresh = await deriveRecipe({ workerUrl: settings.workerUrl, token: settings.workerToken, url: watch.url, snapshot, force: true, feedback });
+    if (fresh) await putRecipe(watch.url, fresh);
+  } catch (e) {
+    if (e.status === 429) { await pauseDerivation(e.retryAfterSec); throw new Error('Daily LLM budget reached — re-derivation retries automatically tomorrow.'); }
+    throw e;
+  } finally {
+    try { await chrome.tabs.remove(tab.id); } catch { /* gone */ }
+  }
+
+  // This site needed a recipe correction, so pin it to the recipe-applying tab path and re-check
+  // now — checkWatch will re-read the recipe we just cached and apply it.
+  watch.fetchMode = 'tab';
+  return checkWatch(watch);
 }
 
 // Tier 2: cheap LLM. Runs only when there's no structured price, or a watched area changed.
