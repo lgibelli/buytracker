@@ -22,10 +22,10 @@ id = "bdfacf3797584743a270c2c6211a84b6"
 #   wrangler d1 migrations apply buytracker-reports --remote
 # Review anytime with:  wrangler d1 execute buytracker-reports --remote \
 #   --command "SELECT ts,host,correct_availability,correct_price,note,outcome FROM reports ORDER BY ts DESC LIMIT 50"
-# [[d1_databases]]
-# binding = "REPORTS"
-# database_name = "buytracker-reports"
-# database_id = "PASTE_D1_DATABASE_ID_HERE"
+[[d1_databases]]
+binding = "REPORTS"
+database_name = "buytracker-reports"
+database_id = "79216ad0-0b93-4901-bd15-07e35723d606"
 
 [vars]
 # Default model for recipe derivation. Override per-deploy if you like.
