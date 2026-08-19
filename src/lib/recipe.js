@@ -39,16 +39,29 @@ export function buildSnapshot(selector) {
     return parts.join(' > ');
   };
 
+  // Subtree text like textContent — split currency/amount spans still read as one price — but bails
+  // after 300 raw chars (never a ≤24-char price label). el.textContent on every element serializes
+  // each wrapper's whole subtree: seconds of pegged CPU on big pages, wasted on oversized text.
+  const shortText = (el) => {
+    let s = '';
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let t;
+    while ((t = w.nextNode())) {
+      s += t.nodeValue;
+      if (s.length > 300) return null;
+    }
+    return s.replace(/\s+/g, ' ').trim();
+  };
+
   // Currency-tagged short texts → price candidates (with a class hint, so the model can pick a
   // class-based selector that generalises across the site's products rather than a brittle nth path).
   const priceCandidates = [];
   const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-  let el;
+  let el, visited = 0;
   while ((el = tw.nextNode())) {
-    if (priceCandidates.length >= 25) break;
-    // textContent so split currency/amount spans read as one price; one currency token only, to skip
-    // composite wrappers that hold both the current and struck price together.
-    const own = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (priceCandidates.length >= 25 || ++visited > 30000) break;
+    // One currency token only, to skip composite wrappers that hold both the current and struck price.
+    const own = shortText(el);
     if (!own || own.length > 24) continue;
     if (!curOf(own) || !NUM.test(own) || (own.match(CUR_TOK) || []).length !== 1) continue;
     let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }
@@ -59,8 +72,9 @@ export function buildSnapshot(selector) {
   const OOS = /sold\s?out|out of stock|notify me|currently unavailable|esaurito|non disponibile|avvisami|ausverkauft|wyprzedane|rupture de stock|épuisé|indisponible/i;
   const BUY = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|dodaj do koszyka|ajouter au panier/i;
   const buttons = [];
+  let seenBtns = 0;
   for (const b of document.querySelectorAll('button, input[type=submit], input[type=button], [role=button], a.button, a.btn')) {
-    if (buttons.length >= 20) break;
+    if (buttons.length >= 20 || ++seenBtns > 1000) break;
     const label = (b.innerText || b.value || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
     if (!label || label.length > 40) continue;
     if (!OOS.test(label) && !BUY.test(label)) continue;

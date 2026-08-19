@@ -100,11 +100,13 @@ export function capturePage(selector) {
     const scope = form || document.body;
     let buy = false, buyEnabled = false, oos = false;
     if (scope) {
+      let seen = 0;
       for (const el of scope.querySelectorAll('button, input[type=submit], input[type=button], [role=button]')) {
+        if (++seen > 1000) break; // some pages tag thousands of divs role=button — the buy box isn't there
         const label = (el.innerText || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
         if (!label || label.length > 40) continue;
         const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
-        if (OOS_RE.test(label)) oos = true;
+        if (OOS_RE.test(label)) { oos = true; break; } // OOS decides the verdict below regardless of later finds
         if (BUY_RE.test(label)) { buy = true; if (!disabled) buyEnabled = true; }
       }
     }
@@ -144,12 +146,27 @@ export function capturePage(selector) {
       }
       return false;
     };
+    // Subtree text like textContent — split currency/amount spans still read as one price — but
+    // bails after 300 raw chars, which could never collapse to a ≤24-char price label. Reading
+    // el.textContent on EVERY element serializes each wrapper's whole subtree (O(page text × depth)):
+    // seconds of pegged CPU on big store pages, all spent discovering the text is too long to use.
+    const shortText = (el) => {
+      let s = '';
+      const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let t;
+      while ((t = w.nextNode())) {
+        s += t.nodeValue;
+        if (s.length > 300) return null;
+      }
+      return s.replace(/\s+/g, ' ').trim();
+    };
     const cands = [];
     const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-    let el;
+    let el, visited = 0;
     while ((el = tw.nextNode())) {
-      // textContent (not just direct text nodes) so split currency/amount spans read as one price.
-      const own = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      // Hard ceilings so a pathological DOM bounds the scan; the main price sits well inside both.
+      if (++visited > 30000 || cands.length >= 60) break;
+      const own = shortText(el);
       if (!own || own.length > 24) continue;     // a bare price label, not a sentence that mentions a number
       const cur = curOf(own);
       if (!cur) continue;

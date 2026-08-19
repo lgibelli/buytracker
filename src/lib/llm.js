@@ -43,22 +43,30 @@ function buildPrompt({ baselineText, currentText, lastPrice, currency }) {
 
 export async function detectOffer({ apiKey, model, baselineText, currentText, lastPrice, currency }) {
   if (!apiKey) throw new Error('No API key configured');
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': ANTHROPIC_VERSION,
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({
-      model: model || 'claude-haiku-4-5',
-      max_tokens: 512,
-      tools: [REPORT_TOOL],
-      tool_choice: { type: 'tool', name: 'report_product' },
-      messages: [{ role: 'user', content: buildPrompt({ baselineText, currentText, lastPrice, currency }) }]
-    })
-  });
+  // Bounded like every other network call here — an untimed fetch can park a whole check pass
+  // (checkDue runs watches sequentially), which is how passes end up outliving the alarm tick.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  let res;
+  try {
+    res = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: model || 'claude-haiku-4-5',
+        max_tokens: 512,
+        tools: [REPORT_TOOL],
+        tool_choice: { type: 'tool', name: 'report_product' },
+        messages: [{ role: 'user', content: buildPrompt({ baselineText, currentText, lastPrice, currency }) }]
+      }),
+      signal: ctrl.signal
+    });
+  } finally { clearTimeout(timer); }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`LLM HTTP ${res.status}: ${body.slice(0, 200)}`);

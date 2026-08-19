@@ -264,15 +264,17 @@ async function reportWrong(id, feedback) {
   return checkWatch(watch);
 }
 
-// Tier 2: cheap LLM. Runs only when there's no structured price, or a watched area changed.
-// Area watches run it ONLY when forced (their region's hash moved) — never on a full-page diff.
+// Tier 2: cheap LLM. Runs only when there's no structured price, or a watched area changed — and,
+// for whole-page watches, only when the page text actually changed since the last time we asked
+// (forceLlm) so a page that will never have a structured price doesn't cost an LLM call every tick.
 async function computeFrom(ex, watch, settings, forceLlm) {
   let price = ex.hasStructuredPrice ? ex.price : null;
   let currency = ex.currency || watch.currency || null;
   let availability = ex.availability || null;
-  let newOffer = false, summary = null, llmError = null;
+  let newOffer = false, summary = null, llmError = null, offerChecked = false;
 
-  const allowLlm = watch.selector ? forceLlm : (price == null || forceLlm);
+  const needsLlm = watch.selector ? true : price == null;
+  const allowLlm = needsLlm && forceLlm;
   if (allowLlm && settings.useLlmFallback && settings.apiKey && (ex.fullText || ex.areaText)) {
     try {
       const r = await detectOffer({
@@ -287,9 +289,15 @@ async function computeFrom(ex, watch, settings, forceLlm) {
       if (availability == null) availability = r.availability || null;
       newOffer = !!r.new_offer;
       summary = r.summary || null;
+      offerChecked = true;
     } catch (e) { llmError = 'llm: ' + String(e.message || e); }
+  } else if (!watch.selector && needsLlm && !forceLlm) {
+    // Page text is unchanged since the last time we asked the LLM — reuse what it told us then
+    // instead of treating an unchanged, still-unstructured page as newly blank.
+    price = watch.lastPrice ?? null;
+    if (availability == null) availability = watch.lastAvailability || null;
   }
-  return { price, currency, availability, newOffer, summary, llmError };
+  return { price, currency, availability, newOffer, summary, llmError, offerChecked };
 }
 
 // --- watch creation ---
@@ -303,8 +311,11 @@ async function saveNewWatch({ cap, selector, fetchMode, baseline, watchType = 'b
     selector: selector || null, fetchMode, baselineText: baseline || '',
     // Seed the area hash from the baseline so the first re-check doesn't burn an LLM call.
     lastAreaHash: selector ? fnv1a((baseline || '').slice(0, 20000)) : null,
+    // NOT seeded (unlike lastAreaHash): a whole-page watch should still get one LLM attempt on its
+    // first real check even if the page hasn't changed since the baseline capture.
+    lastLlmHash: null,
     paused: false, history: [], lastCheckedAt: now, lastStatus: 'ok', lastError: null, lastSummary: null,
-    lastAvailability: cap.product?.availability || null
+    lastAvailability: cap.product?.availability || null, lastOfferActive: false
   };
   if (cap.product?.price != null || cap.product?.availability) {
     recordObservation(watch, { t: now, price: cap.product.price ?? null, currency: cap.product.currency, availability: cap.product.availability });
@@ -388,6 +399,15 @@ async function saveChecked(watch) {
   return true;
 }
 
+// Should this check ask the LLM at all? Only when the relevant text (the watched area for an area
+// watch, the whole page otherwise) differs from the hash we last evaluated it against — comparing
+// against a fixed creation-time baseline would mean a page that never gets structured data pays for
+// an LLM call on every single tick forever.
+function forceLlmFor(watch, exResult, areaOk) {
+  if (!areaOk || !exResult.textHash) return false;
+  return watch.selector ? exResult.textHash !== watch.lastAreaHash : exResult.textHash !== watch.lastLlmHash;
+}
+
 async function checkWatch(watch) {
   if (!watch) throw new Error('Watch not found');
   const settings = await getSettings();
@@ -405,7 +425,7 @@ async function checkWatch(watch) {
 
     // A stale area selector must not force LLM diffs of the full page against the area baseline.
     const areaOk = !watch.selector || !!ex.areaText;
-    let force = areaOk && !!watch.selector && !!ex.textHash && ex.textHash !== watch.lastAreaHash;
+    let force = forceLlmFor(watch, ex, areaOk);
     let res = await computeFrom(ex, watch, settings, force);
 
     // Escalate to a real tab when blocked, or when the static fetch lacks a signal this watch needs.
@@ -421,7 +441,7 @@ async function checkWatch(watch) {
       if (ex2.status === 'ok') {
         const wasBlocked = ex.status === 'blocked';
         const areaOk2 = !watch.selector || !!ex2.areaText;
-        const res2 = await computeFrom(ex2, watch, settings, areaOk2 && !!watch.selector && ex2.textHash !== watch.lastAreaHash);
+        const res2 = await computeFrom(ex2, watch, settings, forceLlmFor(watch, ex2, areaOk2));
         // Adopt the tab only if it supplies a signal THIS watch actually needs — a deterministic
         // availability (buy box) counts for an availability watch, a price for a price watch — so we
         // don't replace a good static result with a tab that happened to read an irrelevant signal.
@@ -441,7 +461,14 @@ async function checkWatch(watch) {
 
     const areaOkFinal = !watch.selector || !!ex.areaText;
     if (watch.selector && areaOkFinal && ex.textHash) watch.lastAreaHash = ex.textHash;
+    if (!watch.selector && ex.textHash) watch.lastLlmHash = ex.textHash;
     const change = recordObservation(watch, { t: now, price: res.price, currency: res.currency, availability: res.availability });
+    // Edge-trigger like restock/oos: the LLM re-evaluates newOffer against the fixed creation-time
+    // baseline every time it's asked, so a persistent promo would otherwise re-fire every time the
+    // hash-gate above lets a check through. Only advance this on an actual fresh LLM read
+    // (offerChecked) — a skipped check must not silently forget that the offer was already seen.
+    const newOfferEdge = res.offerChecked && !!res.newOffer && !watch.lastOfferActive;
+    if (res.offerChecked) watch.lastOfferActive = !!res.newOffer;
     watch.lastStatus = (res.price == null && !res.availability) ? 'no_data' : 'ok';
     watch.lastCheckedAt = now;
     watch.lastSummary = res.summary || watch.lastSummary;
@@ -449,7 +476,7 @@ async function checkWatch(watch) {
       || (watch.selector && !areaOkFinal ? 'watched area not found (selector may be stale — re-create the area watch)' : null);
 
     const saved = await saveChecked(watch);
-    if (saved) fireNotifications(watch, { change, price: res.price, currency: res.currency, newOffer: res.newOffer });
+    if (saved) fireNotifications(watch, { change, price: res.price, currency: res.currency, newOffer: newOfferEdge });
     return watch;
   } catch (e) {
     watch.lastStatus = 'error'; watch.lastError = String(e.message || e); watch.lastCheckedAt = now;
@@ -476,7 +503,31 @@ function toast(title, message) {
   chrome.notifications.create(`bt|_|${Date.now()}`, { type: 'basic', iconUrl: chrome.runtime.getURL('icons/icon128.png'), title, message, priority: 1 });
 }
 
-async function checkDue(force = false) {
+// One pass at a time. A pass can outlast the 15-min tick (each tab check is ~40s, and there may be
+// many watches), and stacked passes snowball concurrent hidden tabs — sustained 100% CPU. A tick or
+// "check all" landing mid-pass coalesces into a single follow-up pass, keeping the strongest force
+// flag, so nothing is skipped but nothing ever runs concurrently either.
+let passPromise = null;
+let queuedForce = null; // null = no follow-up queued; else the force flag to run it with
+
+function checkDue(force = false) {
+  if (passPromise) {
+    queuedForce = (queuedForce ?? false) || force;
+    return passPromise;
+  }
+  passPromise = (async () => {
+    try {
+      await checkPass(force);
+      while (queuedForce != null) {
+        const f = queuedForce; queuedForce = null;
+        await checkPass(f);
+      }
+    } finally { passPromise = null; }
+  })();
+  return passPromise;
+}
+
+async function checkPass(force) {
   const watches = await getWatches();
   const now = Date.now();
   for (const w of Object.values(watches)) {

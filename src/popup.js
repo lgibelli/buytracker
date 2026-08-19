@@ -70,6 +70,7 @@ function card(w) {
         <div class="sub">checked ${ago(w.lastCheckedAt)}${w.paused ? ' · paused' : ''} ${problem}</div>
       </div>
       <div class="price"><div class="now${stockState(w) === 'out' ? ' oos' : ''}">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${stockState(w) === 'out' ? '<div class="oos-tag">out of stock</div>' : deltaHtml(w.history)}</div>
+      <button class="iconbtn danger del" data-act="delete" title="Delete watch" aria-label="Delete watch">🗑</button>
     </div>
     <div class="detail">
       <div class="meta">
@@ -83,7 +84,6 @@ function card(w) {
         <span style="margin-left:auto"></span>
         <button class="iconbtn" data-act="check" title="Check now" aria-label="Check now">↻</button>
         <button class="iconbtn" data-act="pause" title="${w.paused ? 'Resume' : 'Pause'}" aria-label="${w.paused ? 'Resume' : 'Pause'}">${w.paused ? '▶' : '⏸'}</button>
-        <button class="iconbtn danger" data-act="delete" title="Delete" aria-label="Delete">🗑</button>
       </div>
       <div class="chart">${priceChartSVG(w.history, { currency: cur, width: 358, height: 110 })}</div>
       ${w.lastSummary ? `<div class="summary">“${esc(w.lastSummary)}”</div>` : ''}

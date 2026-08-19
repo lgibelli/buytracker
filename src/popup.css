@@ -60,6 +60,10 @@ input.target { width: 78px; }
 .iconbtn { background: #1b222c; border: 1px solid #2a3340; border-radius: 6px; color: #b6c2cf; padding: 3px 7px; font-size: 13px; line-height: 1; }
 .iconbtn:hover { background: #232c38; color: #e6edf3; }
 .iconbtn.danger:hover { background: #3a1d1f; border-color: #4d2526; color: #f87171; }
+/* Delete sits in the always-visible header row, not behind the collapse fold — a watch you want
+   gone shouldn't require expanding the card first. Muted at rest so it doesn't compete with price. */
+.head .del { flex: none; background: none; border-color: transparent; color: #6b7684; }
+.head .del:hover { background: #3a1d1f; border-color: #4d2526; color: #f87171; }
 .summary { margin-top: 6px; font-size: 11px; color: #9aa7b4; font-style: italic; }
 /* Just-in-time hint */
 .tip { margin: 8px 10px 0; padding: 9px 11px; display: flex; align-items: flex-start; gap: 8px;
