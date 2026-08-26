@@ -81,6 +81,7 @@ export function capturePage(selector) {
       chosen = pool[0];
     }
     product = strip(chosen);
+    if (product.price != null) product.priceSource = 'jsonld';
     if (!product.availability) { const a = cands.find((c) => c.availability); if (a) product.availability = a.availability; }
   }
 
@@ -92,8 +93,8 @@ export function capturePage(selector) {
   // schema.org value (multilingual keyword matching can't reliably beat one — that's how a live
   // `OnlineOnly` got flipped to "out of stock"). Genuinely-wrong structured data is corrected by a
   // learned per-site recipe (applied later) or the user's "report wrong", not by this heuristic.
-  const OOS_RE = /sold\s?out|out of stock|notify me|email when available|currently unavailable|temporarily unavailable|esaurito|non disponibile|avvisami|ausverkauft|nicht verfügbar|benachrichtigen|wyprzedane|brak w magazynie|powiadom|rupture de stock|épuisé|indisponible/i;
-  const BUY_RE = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|dodaj do koszyka|ajouter au panier/i;
+  const OOS_RE = /sold\s?out|out of stock|notify me|email when available|currently unavailable|temporarily unavailable|esaurito|non disponibile|avvisami|ausverkauft|nicht verfügbar|benachrichtigen|wyprzedane|brak w magazynie|niedostępn|powiadom|rupture de stock|épuisé|indisponible|agotado|no disponible/i;
+  const BUY_RE = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|do koszyka|kup teraz|ajouter au panier|añadir a la cesta/i;
   let buyBox = null;
   {
     const form = document.querySelector('form[action*="cart/add"], form[action*="/cart"]');
@@ -114,11 +115,18 @@ export function capturePage(selector) {
     else if (buyEnabled) buyBox = 'InStock';
   }
 
-  // Whole-page text hint only as a last resort, when there's no recognizable buy-box at all.
+  // Whole-page text hint only as a last resort, when there's no recognizable buy-box at all. Amazon
+  // renders "unavailable" as plain text with NO button at all (so the scan above finds nothing), in
+  // the store's own language — an English-only list left amazon.pl's "Chwilowo niedostępne." as
+  // availability=null, which let a carousel price pass for the product's and fire a "price drop".
+  // Multi-word phrases only: this runs over the whole page, where a bare "niedostępne"/"unavailable"
+  // shows up in unrelated copy (footer, feature blurbs).
   if (!buyBox) {
     const lc = pageText.toLowerCase();
-    if (/\bsold out\b|out of stock|notify me when|email when available|currently unavailable|temporarily unavailable/.test(lc)) buyBox = 'OutOfStock';
-    else if (/add to cart|add to bag|add to basket|buy now|in stock/.test(lc)) buyBox = 'InStock';
+    const OOS_TEXT = /\bsold out\b|out of stock|notify me when|email when available|currently unavailable|temporarily unavailable|chwilowo niedostępn|obecnie niedostępn|produkt niedostępn|derzeit nicht verfügbar|zurzeit nicht verfügbar|actuellement indisponible|attualmente non disponibile|momentaneamente non disponibile|temporalmente sin stock|no disponible temporalmente/;
+    const BUY_TEXT = /add to cart|add to bag|add to basket|buy now|in stock|dodaj do koszyka|in den warenkorb|ajouter au panier|aggiungi al carrello|añadir a la cesta/;
+    if (OOS_TEXT.test(lc)) buyBox = 'OutOfStock';
+    else if (BUY_TEXT.test(lc)) buyBox = 'InStock';
   }
 
   if (!product) {
@@ -131,8 +139,20 @@ export function capturePage(selector) {
   // in DOM text — e.g. LordGun). The SELLING price is a currency-tagged amount that is NOT struck
   // through; list/old prices carry a <del>/<s>/<strike>, a line-through style, or an *-old/was/
   // compare/listino class. Runs only when the structured path found no price, so it never overrides
-  // JSON-LD or the Shopify .js data. Pick the most prominent (largest-font) live amount; cheapest ties.
+  // JSON-LD or the Shopify .js data. Pick the most prominent (largest-font) live amount; first in
+  // document order on ties (the main offer precedes the recommendation rails, and "cheapest wins"
+  // manufactured a price drop whenever the product itself had no price).
+  // Amounts inside recommendation / sponsored / "also viewed" rails are never the main product's —
+  // on an unavailable listing they are the ONLY prices on the page, and one of them was reported as
+  // the product's own. The result is tagged priceSource:'dom' so the caller treats it as a guess.
   if (!product || product.price == null) {
+    const RAIL = /carousel|sponsored|\bsp_|similar|related|also[-_ ]?(viewed|bought)|recommend|upsell|cross[-_]?sell|recently[-_ ]?viewed|bought[-_ ]?together/i;
+    const inRail = (el) => {
+      for (let p = el, i = 0; p && i < 14; p = p.parentElement, i++) {
+        if (RAIL.test(String(p.id || '')) || RAIL.test(String(p.className || ''))) return true;
+      }
+      return false;
+    };
     const curOf = (s) => /€|\bEUR\b/i.test(s) ? 'EUR' : /\$|\bUSD\b/i.test(s) ? 'USD' : /£|\bGBP\b/i.test(s) ? 'GBP' : /zł|\bPLN\b/i.test(s) ? 'PLN' : /\bCHF\b/i.test(s) ? 'CHF' : null;
     // Cents optional so whole-number prices ($29, 199, 1,299) are not missed.
     const NUM = /(\d{1,3}(?:[.\s]?\d{3})*(?:[.,]\d{2})?)/;
@@ -176,14 +196,16 @@ export function capturePage(selector) {
       if (!m) continue;
       const val = pickPrice(m[1]);
       if (val == null || val <= 0) continue;
+      if (inRail(el)) continue;
       let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }
       cands.push({ val, cur, struck: isStruck(el), fs });
     }
     const live = cands.filter((c) => !c.struck);
-    const pick = (live.length ? live : cands).sort((a, b) => b.fs - a.fs || a.val - b.val)[0];
+    const pick = (live.length ? live : cands).sort((a, b) => b.fs - a.fs)[0]; // stable sort: DOM order on ties
     if (pick) {
       if (!product) product = { name: document.title || null, price: null, currency: null, availability: null };
       product.price = pick.val;
+      product.priceSource = 'dom';
       if (!product.currency) product.currency = pick.cur;
     }
   }
