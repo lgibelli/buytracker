@@ -69,8 +69,8 @@ export function buildSnapshot(selector) {
   }
 
   // Buy / out-of-stock looking controls.
-  const OOS = /sold\s?out|out of stock|notify me|currently unavailable|esaurito|non disponibile|avvisami|ausverkauft|wyprzedane|rupture de stock|épuisé|indisponible/i;
-  const BUY = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|dodaj do koszyka|ajouter au panier/i;
+  const OOS = /sold\s?out|out of stock|notify me|currently unavailable|temporarily unavailable|esaurito|non disponibile|avvisami|ausverkauft|nicht verfügbar|wyprzedane|brak w magazynie|niedostępn|rupture de stock|épuisé|indisponible|agotado|no disponible/i;
+  const BUY = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|do koszyka|kup teraz|ajouter au panier|añadir a la cesta/i;
   const buttons = [];
   let seenBtns = 0;
   for (const b of document.querySelectorAll('button, input[type=submit], input[type=button], [role=button], a.button, a.btn')) {

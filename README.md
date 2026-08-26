@@ -35,7 +35,9 @@ price history** with a step chart and change markers.
 ## Testing
 
 Automated smoke test (headless Chromium loads the unpacked extension, boots the service worker,
-renders popup/options, and runs a real end-to-end add-watch + re-check against a live product page):
+renders popup/options, checks DOM extraction against saved page mirrors in `test/fixtures/` — e.g. an
+unavailable amazon.pl listing must yield no price and OutOfStock — and runs a real end-to-end
+add-watch + re-check against a live product page):
 
 ```bash
 mkdir -p /tmp/bt-test && cd /tmp/bt-test && npm i playwright   # once

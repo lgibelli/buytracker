@@ -4,7 +4,7 @@ import { capturePage } from './lib/capture.js';
 import { pickArea } from './lib/picker.js';
 import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe } from './lib/recipe.js';
 import {
-  getSettings, getWatches, getWatch, putWatch, newId, recordObservation
+  getSettings, getWatches, getWatch, putWatch, newId, recordObservation, availState
 } from './lib/storage.js';
 
 const TICK_MIN = 15;
@@ -175,6 +175,9 @@ async function extractViaTab(url, selector, opts = {}) {
     let price = result.product?.price ?? null;
     let currency = result.product?.currency ?? null;
     let availability = result.product?.availability ?? null;
+    // Where the price came from: 'jsonld' (schema.org) and 'recipe' (site-specific) are deterministic;
+    // 'dom' is capturePage's rendered-text guess — the most prominent currency amount on the page.
+    let priceSource = price != null ? (result.product?.priceSource || 'dom') : null;
     let recipeUsed = false, recipeDerived = false, recipeError = null;
 
     // A site-specific recipe is authoritative over the generic heuristic — it was derived precisely
@@ -182,7 +185,7 @@ async function extractViaTab(url, selector, opts = {}) {
     const apply = (rec) => {
       if (!rec) return;
       recipeUsed = true;
-      if (rec.price != null) price = rec.price;
+      if (rec.price != null) { price = rec.price; priceSource = 'recipe'; }
       if (rec.currency) currency = rec.currency;
       if (rec.availability) availability = rec.availability;
     };
@@ -220,7 +223,10 @@ async function extractViaTab(url, selector, opts = {}) {
     }
 
     return {
-      status: 'ok', title: result.title, price, currency, availability, hasStructuredPrice: price != null,
+      // A DOM-scan guess is NOT structured: on a product with no price of its own (unavailable) it is
+      // some bystander's price — computeFrom holds it back so the LLM can rule on the page first.
+      status: 'ok', title: result.title, price, currency, availability, priceSource,
+      hasStructuredPrice: price != null && priceSource !== 'dom',
       fullText: full, areaText: area, textHash: fnv1a((area || full).slice(0, 20000)),
       viaTab: true, recipeUsed, recipeDerived, recipeError
     };
@@ -268,10 +274,19 @@ async function reportWrong(id, feedback) {
 // for whole-page watches, only when the page text actually changed since the last time we asked
 // (forceLlm) so a page that will never have a structured price doesn't cost an LLM call every tick.
 async function computeFrom(ex, watch, settings, forceLlm) {
-  let price = ex.hasStructuredPrice ? ex.price : null;
   let currency = ex.currency || watch.currency || null;
   let availability = ex.availability || null;
-  let newOffer = false, summary = null, llmError = null, offerChecked = false;
+  // Structured prices (JSON-LD / Shopify .js / site recipe) are taken as-is. A rendered-DOM guess
+  // (priceSource 'dom': the most prominent currency amount on the page) is trusted only when the buy
+  // box says the product is purchasable — then that amount is almost certainly its price. When it
+  // isn't (unavailable, or unknown), the page may carry no price of its own and the guess is a
+  // bystander's: on an unavailable amazon.pl listing it was a sponsored carousel item, and it went
+  // out as a "price drop". Such a guess is held back so the LLM — told to ignore related items —
+  // rules on the page first; it is used only when no LLM verdict is available at all.
+  const guessOnly = ex.price != null && !ex.hasStructuredPrice && availState(availability) !== 'in';
+  const guess = guessOnly ? ex.price : null;
+  let price = guessOnly ? null : (ex.price ?? null);
+  let newOffer = false, summary = null, llmError = null, offerChecked = false, reused = false;
 
   const needsLlm = watch.selector ? true : price == null;
   const allowLlm = needsLlm && forceLlm;
@@ -293,10 +308,17 @@ async function computeFrom(ex, watch, settings, forceLlm) {
     } catch (e) { llmError = 'llm: ' + String(e.message || e); }
   } else if (!watch.selector && needsLlm && !forceLlm) {
     // Page text is unchanged since the last time we asked the LLM — reuse what it told us then
-    // instead of treating an unchanged, still-unstructured page as newly blank.
-    price = watch.lastPrice ?? null;
+    // instead of treating an unchanged, still-unstructured page as newly blank. "What it told us" is
+    // the last history point, which may legitimately be no price at all (unavailable) — NOT lastPrice,
+    // which is sticky for display and would resurrect the pre-outage price into the series.
+    const last = (watch.history || [])[(watch.history || []).length - 1];
+    price = last ? last.price : (watch.lastPrice ?? null);
     if (availability == null) availability = watch.lastAvailability || null;
+    reused = true;
   }
+  // No LLM verdict for this page state (not configured, no text, or the call failed) and nothing to
+  // reuse: the heuristic guess is the best we have — better than recording a blank.
+  if (price == null && !offerChecked && !reused) price = guess;
   return { price, currency, availability, newOffer, summary, llmError, offerChecked };
 }
 
@@ -445,7 +467,10 @@ async function checkWatch(watch) {
         // Adopt the tab only if it supplies a signal THIS watch actually needs — a deterministic
         // availability (buy box) counts for an availability watch, a price for a price watch — so we
         // don't replace a good static result with a tab that happened to read an irrelevant signal.
-        const tabUseful = (needPrice && (res2.price != null || ex2.hasStructuredPrice)) || (needAvail && res2.availability != null);
+        // A deterministic availability where the static fetch had none is useful to ANY watch: it is
+        // what explains (and excuses) a missing price, and it's what the popup badge shows.
+        const tabUseful = (needPrice && (res2.price != null || ex2.hasStructuredPrice)) || (needAvail && res2.availability != null)
+          || (res2.availability != null && res.availability == null);
         if (wasBlocked || tabUseful) {
           ex = ex2; res = res2; watch.fetchMode = 'tab';
         } else if (staticHasNeeded) {
@@ -476,7 +501,7 @@ async function checkWatch(watch) {
       || (watch.selector && !areaOkFinal ? 'watched area not found (selector may be stale — re-create the area watch)' : null);
 
     const saved = await saveChecked(watch);
-    if (saved) fireNotifications(watch, { change, price: res.price, currency: res.currency, newOffer: newOfferEdge });
+    if (saved) fireNotifications(watch, { change, price: res.price, currency: res.currency, availability: res.availability, newOffer: newOfferEdge });
     return watch;
   } catch (e) {
     watch.lastStatus = 'error'; watch.lastError = String(e.message || e); watch.lastCheckedAt = now;
@@ -484,10 +509,12 @@ async function checkWatch(watch) {
   }
 }
 
-function fireNotifications(watch, { change, price, currency, newOffer }) {
+function fireNotifications(watch, { change, price, currency, availability, newOffer }) {
   if (!change && !newOffer) return; // nothing actually changed — never repeat alerts (e.g. target-hit) every check
   const cur = currency || watch.currency || '';
-  const wantsPrice = watch.watchType !== 'availability';
+  // A price on something that can't be bought right now isn't actionable — and while a product is
+  // unavailable, whatever price got read is the least trustworthy (see computeFrom). Stock alerts still fire.
+  const wantsPrice = watch.watchType !== 'availability' && availState(availability) !== 'out';
   const wantsAvail = watch.watchType !== 'price';
   const tgt = watch.targetPrice;
   if (wantsPrice && tgt != null && price != null && price <= tgt) notify(watch, '🎯 Target price hit', `${watch.title} is ${price} ${cur} (≤ ${tgt}).`);

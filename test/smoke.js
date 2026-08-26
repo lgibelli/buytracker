@@ -25,6 +25,34 @@ const path = require("path").resolve(__dirname, "..");
       ? `OK: availState maps all ${AVAIL_CASES.length} enum cases (OnlineOnly→in, unknown→null)`
       : (fail('availState: ' + availBad.map(([s]) => `${JSON.stringify(s)}→${availState(s)}`).join(', ')), ''));
 
+    // 0b. recordObservation precedence: an in→out transition is 'oos' even when the price collapses.
+    //     This is what keeps an unavailable listing from ever reading as a "price drop".
+    const { recordObservation } = await import(require('url').pathToFileURL(path + '/src/lib/storage.js').href);
+    const w0 = { history: [] };
+    recordObservation(w0, { t: 1, price: 2199, currency: 'PLN', availability: 'InStock' });
+    const kindOos = recordObservation(w0, { t: 2, price: null, currency: 'PLN', availability: 'OutOfStock' });
+    console.log(kindOos === 'oos' ? 'OK: recordObservation in→out with price gone = oos (not drop)' : (fail(`recordObservation kind=${kindOos}`), ''));
+
+    // 0c. capturePage against a reduced mirror of an UNAVAILABLE amazon.pl listing (see the fixture's
+    //     header). Regression for the "⬇️ Price dropped … is now 211 PLN" false alert: the product had
+    //     no price and no buy button, "Chwilowo niedostępne." was plain text the English-only fallback
+    //     didn't read, and the DOM price scan picked the cheapest sponsored-carousel item.
+    const { capturePage } = await import(require('url').pathToFileURL(path + '/src/lib/capture.js').href);
+    const fixture = (name) => require('url').pathToFileURL(path + '/test/fixtures/' + name).href;
+    const fx = await ctx.newPage();
+    await fx.goto(fixture('amazon-pl-unavailable.html'));
+    const capOut = (await fx.evaluate(capturePage, null)).product || {};
+    console.log(/outofstock/i.test(capOut.availability || '') ? 'OK: amazon.pl "Chwilowo niedostępne." → OutOfStock' : (fail(`unavailable fixture availability=${capOut.availability}`), ''));
+    console.log(capOut.price == null ? 'OK: no bystander (carousel/sponsored) price reported for the unavailable product' : (fail(`unavailable fixture price=${capOut.price} (${capOut.priceSource})`), ''));
+    //     …and the in-stock control: the main price wins over cheaper carousel prices, buy box → InStock,
+    //     and the price is tagged as a DOM guess (only structured sources are trusted without the LLM).
+    await fx.goto(fixture('amazon-pl-instock.html'));
+    const capIn = (await fx.evaluate(capturePage, null)).product || {};
+    console.log(capIn.price === 1950.61 && capIn.currency === 'PLN' ? 'OK: in-stock control → 1950.61 PLN (main price, not a carousel one)' : (fail(`instock fixture price=${capIn.price} ${capIn.currency}`), ''));
+    console.log(/instock/i.test(capIn.availability || '') ? 'OK: in-stock control → InStock via "Dodaj do koszyka"' : (fail(`instock fixture availability=${capIn.availability}`), ''));
+    console.log(capIn.priceSource === 'dom' ? 'OK: rendered-DOM price tagged priceSource=dom' : (fail(`instock fixture priceSource=${capIn.priceSource}`), ''));
+    await fx.close();
+
     // 1. Service worker boots (manifest + ES module imports OK)
     let [sw] = ctx.serviceWorkers();
     if (!sw) sw = await ctx.waitForEvent('serviceworker', { timeout: 15000 });
