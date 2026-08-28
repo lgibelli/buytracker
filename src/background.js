@@ -2,9 +2,9 @@ import { extractFromHtml, detectBlock, fnv1a } from './lib/extract.js';
 import { detectOffer } from './lib/llm.js';
 import { capturePage } from './lib/capture.js';
 import { pickArea } from './lib/picker.js';
-import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe } from './lib/recipe.js';
+import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitizeRecipe } from './lib/recipe.js';
 import {
-  getSettings, getWatches, getWatch, putWatch, newId, recordObservation, availState
+  getSettings, getWatches, getWatch, putWatch, newId, recordObservation, availState, trustedPrice
 } from './lib/storage.js';
 
 const TICK_MIN = 15;
@@ -187,7 +187,15 @@ async function extractViaTab(url, selector, opts = {}) {
       recipeUsed = true;
       if (rec.price != null) { price = rec.price; priceSource = 'recipe'; }
       if (rec.currency) currency = rec.currency;
-      if (rec.availability) availability = rec.availability;
+      // A recipe's OUT-of-stock signal is authoritative — catching one the generic heuristic misses
+      // is usually why the recipe exists. Its IN-stock signal is not: it only says "a selector that
+      // looks purchasable matched", which amazon.pl's hidden keyboard-shortcut "Dodaj do koszyka"
+      // entry satisfied on every page, holding a listing whose own text read "Chwilowo niedostępne"
+      // at "in stock" — which in turn let a carousel price pass as the product's. So an in-stock
+      // recipe signal may FILL a missing availability, never overturn one the page itself stated.
+      if (rec.availability && (rec.availability === 'OutOfStock' || availState(availability) !== 'out')) {
+        availability = rec.availability;
+      }
     };
 
     // Recipes describe the main product; skip them for area watches (which monitor a sub-region).
@@ -209,7 +217,7 @@ async function extractViaTab(url, selector, opts = {}) {
       } else {
         try {
           const snapshot = await runInPage(tab.id, buildSnapshot, [selector || null]);
-          const fresh = await deriveRecipe({ workerUrl: s.workerUrl, token: s.workerToken, url, snapshot, force: !!cached });
+          const fresh = sanitizeRecipe(await deriveRecipe({ workerUrl: s.workerUrl, token: s.workerToken, url, snapshot, force: !!cached }));
           if (fresh) { await putRecipe(url, fresh); recipeDerived = true; apply(await runInPage(tab.id, applyRecipe, [fresh])); }
         } catch (e) {
           if (e.status === 429) {
@@ -294,7 +302,10 @@ async function computeFrom(ex, watch, settings, forceLlm) {
     try {
       const r = await detectOffer({
         apiKey: settings.apiKey, model: settings.model, baselineText: watch.baselineText,
-        currentText: ex.areaText || ex.fullText, lastPrice: watch.lastPrice ?? null, currency
+        currentText: ex.areaText || ex.fullText, lastPrice: watch.lastPrice ?? null, currency,
+        // What the page itself said about stock. Told to the model so an unavailable listing reads
+        // as "this product has no price right now" instead of "find me a number on this page".
+        knownAvailability: availability
       });
       if (price == null) price = r.price ?? null;
       currency = r.currency || currency;
@@ -319,6 +330,11 @@ async function computeFrom(ex, watch, settings, forceLlm) {
   // No LLM verdict for this page state (not configured, no text, or the call failed) and nothing to
   // reuse: the heuristic guess is the best we have — better than recording a blank.
   if (price == null && !offerChecked && !reused) price = guess;
+  // Last gate, and it covers the LLM too: a price we merely READ off the page belongs to the product
+  // only if the product is purchasable (see trustedPrice). The model is asked for "the main product's
+  // price" and tool_choice forces it to answer, so on an unavailable listing whose only amounts are
+  // carousel neighbours' it hands back one of theirs — which then stuck as the watch's price.
+  price = trustedPrice(price, { structured: ex.hasStructuredPrice, availability });
   return { price, currency, availability, newOffer, summary, llmError, offerChecked };
 }
 
@@ -339,8 +355,15 @@ async function saveNewWatch({ cap, selector, fetchMode, baseline, watchType = 'b
     paused: false, history: [], lastCheckedAt: now, lastStatus: 'ok', lastError: null, lastSummary: null,
     lastAvailability: cap.product?.availability || null, lastOfferActive: false
   };
+  // Same rule as a re-check (computeFrom): a rendered-DOM guess is only the product's price when the
+  // product can be bought. Adding a watch on an already-unavailable listing must not seed the series
+  // with a carousel neighbour's price — that first point is what every later check is compared to.
   if (cap.product?.price != null || cap.product?.availability) {
-    recordObservation(watch, { t: now, price: cap.product.price ?? null, currency: cap.product.currency, availability: cap.product.availability });
+    const seeded = trustedPrice(cap.product.price ?? null, {
+      structured: cap.product.priceSource ? cap.product.priceSource !== 'dom' : false,
+      availability: cap.product.availability
+    });
+    recordObservation(watch, { t: now, price: seeded, currency: cap.product.currency, availability: cap.product.availability });
   }
   await putWatch(watch);
   return watch;
@@ -361,7 +384,10 @@ async function addByTab(tab, watchType) {
       name: result.product?.name || result.title || null,
       price: sh.price ?? result.product?.price ?? null,
       currency: sh.currency || result.product?.currency || null,
-      availability: sh.availability || result.product?.availability || null
+      availability: sh.availability || result.product?.availability || null,
+      // Keep where the price came from: the variant endpoint is structured, otherwise it is whatever
+      // capturePage tagged it (jsonld / dom) — saveNewWatch trusts a 'dom' guess only when in stock.
+      priceSource: sh.price != null ? 'shopify' : (result.product?.priceSource || null)
     };
   }
   return saveNewWatch({ cap: result, selector: null, fetchMode: 'auto', baseline: result.pageText, watchType });
@@ -375,7 +401,12 @@ async function addByUrl(url, watchType) {
   if (!ex || ex.status !== 'ok') throw new Error('Could not read that link.');
   const cap = {
     url, title: ex.title || url,
-    product: (ex.price != null || ex.availability) ? { name: ex.title, price: ex.price ?? null, currency: ex.currency ?? null, availability: ex.availability ?? null } : null,
+    product: (ex.price != null || ex.availability)
+      ? {
+        name: ex.title, price: ex.price ?? null, currency: ex.currency ?? null, availability: ex.availability ?? null,
+        priceSource: ex.priceSource || (ex.hasStructuredPrice ? 'jsonld' : 'dom')
+      }
+      : null,
     pageText: ex.fullText || ''
   };
   return saveNewWatch({ cap, selector: null, fetchMode: ex.viaTab ? 'tab' : 'auto', baseline: cap.pageText, watchType });

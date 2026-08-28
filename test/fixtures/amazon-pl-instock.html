@@ -1,7 +1,10 @@
 <!doctype html>
 <!-- Control for amazon-pl-unavailable.html: the same page shape while the product IS purchasable —
      a #corePrice block (larger font than the carousels) and an enabled "Dodaj do koszyka" submit.
-     The carousels still carry cheaper prices, which must not win. -->
+     The carousels still carry cheaper prices, which must not win.
+     The main price is written the way amazon.pl really renders one — "1950,61zł", with NO thousands
+     separator — because that is what truncated it to 195 zł while the amount matcher allowed the
+     separator to be optional. A grouped "1 745,00zł" sits in the carousel so both forms are parsed. -->
 <html lang="pl"><head><meta charset="utf-8">
 <title>ECOVACS WINBOT W2S Omni robot do mycia okien ze stacją wielofunkcyjną : Amazon.pl: Dom i kuchnia</title>
 <style>
@@ -20,7 +23,7 @@
     <div id="centerCol" class="centerColAlign">
       <div id="title_feature_div"><h1 id="title"><span id="productTitle" class="a-size-large product-title-word-break">ECOVACS WINBOT W2S Omni robot do mycia okien ze stacją wielofunkcyjną</span></h1></div>
       <div id="corePrice_feature_div" class="celwidget"><div id="corePriceDisplay_desktop_feature_div">
-        <span class="a-price aok-align-center reinventPricePriceToPayMargin priceToPay"><span class="a-offscreen">1 950,61zł</span><span aria-hidden="true"><span class="a-price-whole">1 950<span class="a-price-decimal">,</span></span><span class="a-price-fraction">61</span><span class="a-price-symbol">zł</span></span></span>
+        <span class="a-price aok-align-center reinventPricePriceToPayMargin priceToPay"><span class="a-offscreen">1950,61zł</span><span aria-hidden="true"><span class="a-price-whole">1950<span class="a-price-decimal">,</span></span><span class="a-price-fraction">61</span><span class="a-price-symbol">zł</span></span></span>
       </div></div>
       <div id="availability_feature_div" class="celwidget"><div id="availability" class="a-section"><span class="a-size-medium a-color-success">Dostępny</span></div></div>
     </div>
@@ -36,7 +39,7 @@
   <div id="similarities_feature_div" class="celwidget">
     <div class="a-carousel-container"><div class="a-carousel-viewport"><ol class="a-carousel">
       <li class="a-carousel-card"><span>ECOVACS WINBOT W2 OMNI</span>
-        <span class="a-price"><span class="a-offscreen">1745,00zł</span><span aria-hidden="true"><span class="a-price-whole">1745<span class="a-price-decimal">,</span></span><span class="a-price-fraction">00</span><span class="a-price-symbol">zł</span></span></span></li>
+        <span class="a-price"><span class="a-offscreen">1 745,00zł</span><span aria-hidden="true"><span class="a-price-whole">1 745<span class="a-price-decimal">,</span></span><span class="a-price-fraction">00</span><span class="a-price-symbol">zł</span></span></span></li>
     </ol></div></div>
   </div>
   <div id="sp_detail_B0GVG5YWXS" class="celwidget">

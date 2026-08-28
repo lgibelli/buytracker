@@ -106,6 +106,12 @@ export function capturePage(selector) {
         if (++seen > 1000) break; // some pages tag thousands of divs role=button — the buy box isn't there
         const label = (el.innerText || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
         if (!label || label.length > 40) continue;
+        // A control the shopper cannot see says nothing about stock — and a hidden one still answers
+        // getAttribute('aria-label'). Amazon ships a permanent, hidden "Dodaj do koszyka" button in
+        // its global keyboard-shortcut menu, on every page, sold out or not. Tested after the cheap
+        // label filters because it forces layout; getClientRects (not offsetParent) so a
+        // position:fixed sticky buy bar still counts as visible.
+        if (!el.getClientRects().length) continue;
         const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
         if (OOS_RE.test(label)) { oos = true; break; } // OOS decides the verdict below regardless of later finds
         if (BUY_RE.test(label)) { buy = true; if (!disabled) buyEnabled = true; }
@@ -154,9 +160,15 @@ export function capturePage(selector) {
       return false;
     };
     const curOf = (s) => /€|\bEUR\b/i.test(s) ? 'EUR' : /\$|\bUSD\b/i.test(s) ? 'USD' : /£|\bGBP\b/i.test(s) ? 'GBP' : /zł|\bPLN\b/i.test(s) ? 'PLN' : /\bCHF\b/i.test(s) ? 'CHF' : null;
-    // Cents optional so whole-number prices ($29, 199, 1,299) are not missed.
-    const NUM = /(\d{1,3}(?:[.\s]?\d{3})*(?:[.,]\d{2})?)/;
+    // An amount is matched WHOLE: either separator-grouped thousands, or a plain run of digits, then
+    // optional cents (optional so whole-number prices — $29, 199 — are not missed). The previous
+    // pattern let the thousands separator itself be optional, which truncated any amount that didn't
+    // use one: amazon.pl renders "1945,21zł" and it was read as 194 zł, and "$1,299.00" as 1.29.
+    const NUM = /(?:\d{1,3}(?:[.,\s]\d{3})+|\d+)(?:[.,]\d{1,2})?/g;
     const CUR_TOK = /€|\$|£|zł|CHF|EUR|USD|GBP|PLN/gi;
+    // A short price label can still hold a second number ("-5% 233,06 zł", "2 x 99,00 zł"); the
+    // amount with the most digits is the price, and a stable sort keeps the first one on a tie.
+    const amountOf = (s) => (s.match(NUM) || []).sort((a, b) => b.replace(/\D/g, '').length - a.replace(/\D/g, '').length)[0] || null;
     const STRUCK = /\b(old|was|strike|compare|regular|original|listino|previous|vecchio|barrat|precedente)\b/i;
     const isStruck = (el) => {
       for (let p = el, i = 0; p && i < 4; p = p.parentElement, i++) {
@@ -192,9 +204,9 @@ export function capturePage(selector) {
       if (!cur) continue;
       // Exactly one currency token — skip composite wrappers holding both current + struck price together.
       if ((own.match(CUR_TOK) || []).length !== 1) continue;
-      const m = NUM.exec(own);
-      if (!m) continue;
-      const val = pickPrice(m[1]);
+      const amt = amountOf(own);
+      if (!amt) continue;
+      const val = pickPrice(amt);
       if (val == null || val <= 0) continue;
       if (inRail(el)) continue;
       let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }

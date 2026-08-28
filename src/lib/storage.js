@@ -86,6 +86,18 @@ export function availState(a) {
   return null;
 }
 
+// Is a price the PRODUCT'S price, or a bystander's? A structured source (a schema.org offer, a
+// Shopify variant, a per-site recipe) names the product itself, so its price is always the
+// product's own. A price merely READ off the rendered page — the DOM scan's "most prominent
+// amount", or the LLM reading page text — is a guess about which of the page's many amounts
+// belongs to the product, and a listing that can't be bought usually shows NO price of its own:
+// every amount on it belongs to a sponsored / "also viewed" / carousel neighbour. That is how
+// 18,99 zł from a carousel became an unavailable amazon.pl robot's price.
+export function trustedPrice(price, { structured, availability }) {
+  if (price == null || structured) return price ?? null;
+  return availState(availability) === 'out' ? null : price;
+}
+
 // Append a price/availability point only when something actually changes (CamelCamelCamel-style
 // step series). Returns the change kind: 'new' | 'drop' | 'rise' | 'restock' | 'oos' | 'change' | null.
 export function recordObservation(watch, { t, price, currency, availability }) {
@@ -106,7 +118,11 @@ export function recordObservation(watch, { t, price, currency, availability }) {
     if (watch.history.length > 1000) watch.history = watch.history.slice(-1000);
   }
   if (currency) watch.currency = currency;
-  watch.lastPrice = price ?? watch.lastPrice ?? null;
+  // lastPrice is sticky for display, so a check that reads nothing doesn't blank the card — EXCEPT
+  // when the product is known to be unpurchasable AND carries no price: there is nothing current to
+  // show, and holding the old number is what kept a once-recorded bystander price on the card
+  // forever. The history (and the chart) still keeps every price the watch ever saw.
+  watch.lastPrice = price ?? (availState(availability) === 'out' ? null : (watch.lastPrice ?? null));
   watch.lastAvailability = availability || watch.lastAvailability || null;
   return priceChanged || availChanged ? (kind || 'change') : null;
 }
