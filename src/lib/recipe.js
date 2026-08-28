@@ -9,8 +9,10 @@
 
 // ---- injected: reduce a rendered page to a small snapshot for the LLM ----
 export function buildSnapshot(selector) {
-  const NUM = /(\d{1,3}(?:[.\s]?\d{3})*(?:[.,]\d{2})?)/; // cents optional → whole-number prices too
+  // Whole-amount match, mirroring capture.js: grouped thousands or a plain digit run, cents optional.
+  const NUM = /(?:\d{1,3}(?:[.,\s]\d{3})+|\d+)(?:[.,]\d{1,2})?/g;
   const CUR_TOK = /€|\$|£|zł|CHF|EUR|USD|GBP|PLN/gi;
+  const hasAmount = (s) => NUM.test(s.replace(/\s+/g, ' ')) && !!(NUM.lastIndex = 0);
   const curOf = (s) => /€|\bEUR\b/i.test(s) ? 'EUR' : /\$|\bUSD\b/i.test(s) ? 'USD' : /£|\bGBP\b/i.test(s) ? 'GBP' : /zł|\bPLN\b/i.test(s) ? 'PLN' : /\bCHF\b/i.test(s) ? 'CHF' : null;
   const STRUCK = /\b(old|was|strike|compare|regular|original|listino|previous|vecchio|barrat|precedente)\b/i;
   const isStruck = (el) => {
@@ -63,7 +65,7 @@ export function buildSnapshot(selector) {
     // One currency token only, to skip composite wrappers that hold both the current and struck price.
     const own = shortText(el);
     if (!own || own.length > 24) continue;
-    if (!curOf(own) || !NUM.test(own) || (own.match(CUR_TOK) || []).length !== 1) continue;
+    if (!curOf(own) || !hasAmount(own) || (own.match(CUR_TOK) || []).length !== 1) continue;
     let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }
     priceCandidates.push({ selector: cssPath(el), cls: String(el.className || '').slice(0, 60) || null, text: own, fontSize: fs, struck: isStruck(el) });
   }
@@ -130,6 +132,32 @@ export function applyRecipe(recipe) {
   const out = { price: null, currency: null, availability: null };
   if (!recipe || typeof recipe !== 'object') return out;
 
+  // A derived selector can match something that is NOT the page's own product. Two ways it lies,
+  // both seen on one amazon.pl recipe:
+  //   * a hidden match — Amazon's keyboard-shortcut menu carries a permanent
+  //     `button[id*='add-to-cart']` (aria-label "Dodaj do koszyka"), so the derived in_stock_selector
+  //     matched on EVERY amazon.pl page and pinned an unavailable listing to "in stock" for weeks;
+  //   * a match inside a recommendation / sponsored rail, i.e. on a NEIGHBOUR product — the same
+  //     recipe's price_selector was "#sp_detail_… > div:nth-of-type(3) > a > span", a sponsored tile,
+  //     so every check reported whatever cheap item happened to be loaded into that slot.
+  // Rendered-ness is tested with getClientRects(), not offsetParent, so a position:fixed sticky buy
+  // bar still counts as shown. It is NOT required when reading an attribute: <meta itemprop="price">
+  // and friends are legitimately invisible.
+  const RAIL = /carousel|sponsored|\bsp[-_]|similar|\bsims|related|also[-_ ]?(viewed|bought)|recommend|upsell|cross[-_]?sell|recently[-_ ]?viewed|bought[-_ ]?together|p13n/i;
+  const inRail = (el) => {
+    for (let p = el, i = 0; p && i < 14; p = p.parentElement, i++) {
+      if (RAIL.test(String(p.id || '')) || RAIL.test(String(p.className || ''))) return true;
+    }
+    return false;
+  };
+  const shown = (el) => { try { return el.getClientRects().length > 0; } catch { return false; } };
+  const find = (sel, mustShow) => {
+    try {
+      for (const el of document.querySelectorAll(sel)) if (!inRail(el) && (!mustShow || shown(el))) return el;
+    } catch { /* bad selector */ }
+    return null;
+  };
+
   const pickPrice = (v) => {
     if (v == null) return null;
     if (typeof v === 'number') return isFinite(v) ? v : null;
@@ -141,8 +169,9 @@ export function applyRecipe(recipe) {
     const n = Number(s);
     return isFinite(n) ? n : null;
   };
-  const text = (sel, attr) => { try { const e = document.querySelector(sel); if (!e) return null; return (attr ? e.getAttribute(attr) : e.textContent || '').trim(); } catch { return null; } };
-  const exists = (sel) => { try { return !!sel && !!document.querySelector(sel); } catch { return false; } };
+  const text = (sel, attr) => { const e = find(sel, !attr); return e ? (attr ? e.getAttribute(attr) : e.textContent || '').trim() : null; };
+  // A stock signal is an existence probe, so it must be a control the shopper can actually see.
+  const exists = (sel) => !!sel && !!find(sel, true);
   const readGlobal = (path) => {
     try {
       let cur = window;
@@ -182,18 +211,44 @@ export function recipeHost(url) {
 // clobber each other's recipe via read-modify-write of a single object.
 const recipeKey = (host) => 'recipe:' + host;
 
+// Selectors a host-wide recipe may never carry, rejected on the string alone (applyRecipe also
+// checks the resolved element, but a recipe this broken should not be stored or reused at all):
+// one that names a recommendation/sponsored rail, and one that names a single product's id — a
+// recipe is reused for every product on the host, so an ASIN-scoped path is meaningless elsewhere
+// even when it happens to resolve on the page it was derived from.
+const RAIL_SEL = /carousel|sponsored|sp[-_]detail|similar|\bsims|related|also[-_ ]?(viewed|bought)|recommend|upsell|cross[-_]?sell|recently[-_ ]?viewed|bought[-_ ]?together|p13n/i;
+// Amazon ASINs are uppercase by construction, so this stays case-sensitive — a lowercase hashed
+// CSS class (".b0a1c2d3e4") is not a product id and must not be thrown away.
+const ASIN_SEL = /B0[A-Z0-9]{8}(?![A-Z0-9])/;
+const PER_ITEM_SEL = /[#.][\w-]*(?:product|item|asin)[-_]\d{3,}/i;
+const SELECTOR_FIELDS = ['price_selector', 'currency_selector', 'in_stock_selector', 'out_of_stock_selector'];
+
+export function sanitizeRecipe(recipe) {
+  if (!recipe || typeof recipe !== 'object') return recipe;
+  const out = { ...recipe };
+  const dropped = [];
+  for (const k of SELECTOR_FIELDS) {
+    const v = out[k];
+    if (typeof v === 'string' && (RAIL_SEL.test(v) || ASIN_SEL.test(v) || PER_ITEM_SEL.test(v))) { out[k] = null; dropped.push(k); }
+  }
+  if (dropped.length) out.dropped = dropped; // kept so a wrong-looking watch can be explained later
+  return out;
+}
+
 export async function getRecipe(url) {
   const host = recipeHost(url);
   if (!host) return null;
   const key = recipeKey(host);
   const got = await chrome.storage.local.get(key);
-  return got[key] || null;
+  // Sanitise on read too, so a bad recipe cached by an earlier version stops being applied now
+  // rather than at its next (up to weekly) re-derivation.
+  return got[key] ? sanitizeRecipe(got[key]) : null;
 }
 
 export async function putRecipe(url, recipe) {
   const host = recipeHost(url);
   if (!host || !recipe) return;
-  await chrome.storage.local.set({ [recipeKey(host)]: { ...recipe, host, cachedAt: Date.now() } });
+  await chrome.storage.local.set({ [recipeKey(host)]: { ...sanitizeRecipe(recipe), host, cachedAt: Date.now() } });
 }
 
 // ---- service-worker side: ask the worker to derive (or return the cached) recipe ----

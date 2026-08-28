@@ -57,6 +57,9 @@ function modeBadge(w) {
   return '';
 }
 
+// The headline price is `lastPrice`, which is sticky across checks that read nothing — but it is
+// cleared once a product is known unpurchasable with no price of its own (see recordObservation),
+// so the card reads "—" rather than presenting a stale number as this product's current price.
 function card(w) {
   const cur = w.currency || '';
   const opts = INTERVALS.map(([v, l]) => `<option value="${v}" ${w.intervalMin === v ? 'selected' : ''}>${l}</option>`).join('');
@@ -69,7 +72,7 @@ function card(w) {
         <div class="title"><a href="${esc(w.url)}" data-act="open">${esc(w.title || w.url)}</a></div>
         <div class="sub">checked ${ago(w.lastCheckedAt)}${w.paused ? ' · paused' : ''} ${problem}</div>
       </div>
-      <div class="price"><div class="now${stockState(w) === 'out' ? ' oos' : ''}">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${stockState(w) === 'out' ? '<div class="oos-tag">out of stock</div>' : deltaHtml(w.history)}</div>
+      <div class="price"><div class="now${stockState(w) === 'out' && w.lastPrice != null ? ' oos' : ''}">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${stockState(w) === 'out' ? '<div class="oos-tag">out of stock</div>' : deltaHtml(w.history)}</div>
       <button class="iconbtn danger del" data-act="delete" title="Delete watch" aria-label="Delete watch">🗑</button>
     </div>
     <div class="detail">

@@ -17,6 +17,13 @@
 <header id="nav-belt">
   <form id="nav-search-bar-form" action="/s"><input type="text" name="k"><input type="submit" value="Idź"></form>
   <a role="button" href="#">Rozwiń konto i listy</a>
+  <!-- Amazon's keyboard-shortcut menu, hidden on EVERY page, carrying a permanent "add to cart"
+       control. A worker-derived recipe took it as its in_stock_selector, so this unavailable listing
+       reported "in stock" on every check for weeks — and an in-stock verdict is what lets a carousel
+       price pass for the product's own. Nothing that isn't rendered may testify about stock. -->
+  <div id="nav-assistant-menu" class="nav-assistant-menu" style="display:none">
+    <button id="nav-assist-add-to-cart" class="nav-assistant-menu-item nav-assistant-link-item" aria-label="Dodaj do koszyka, klawisz shift, klawisz Opt + C">Dodaj do koszyka</button>
+  </div>
 </header>
 <div id="dp-container" class="a-container">
   <div id="ppd">

@@ -13,7 +13,7 @@ const REPORT_TOOL = {
   input_schema: {
     type: 'object',
     properties: {
-      price: { type: ['number', 'null'], description: 'Current selling price as a number, or null if none visible.' },
+      price: { type: ['number', 'null'], description: "The MAIN product's own current selling price, or null if this product shows no price (unavailable / sold out). Never a related, sponsored or accessory item's price." },
       currency: { type: ['string', 'null'], description: 'ISO currency code, e.g. EUR, PLN, USD.' },
       availability: { type: ['string', 'null'], description: 'in stock | out of stock | preorder | unknown' },
       list_price: { type: ['number', 'null'], description: 'Original/struck-through price if a discount is shown, else null.' },
@@ -24,11 +24,12 @@ const REPORT_TOOL = {
   }
 };
 
-function buildPrompt({ baselineText, currentText, lastPrice, currency }) {
+function buildPrompt({ baselineText, currentText, lastPrice, currency, knownAvailability }) {
   const trim = (s) => (s || '').slice(0, 6000);
   return [
     'You compare two captures of the SAME product page to detect price/offer changes.',
     lastPrice != null ? `Last known price: ${lastPrice} ${currency || ''}.` : 'No prior price recorded.',
+    knownAvailability ? `The page's own availability signal reads: ${knownAvailability}.` : '',
     '',
     '=== BASELINE (when the watch was created) ===',
     trim(baselineText),
@@ -37,11 +38,18 @@ function buildPrompt({ baselineText, currentText, lastPrice, currency }) {
     trim(currentText),
     '',
     'Call report_product with the CURRENT main-product price/currency/availability. Ignore related/recommended items.',
+    // A product page carries many amounts and only one of them (sometimes none) is the product's.
+    // Without this the model treats "report the price" as "find a number", and on an unavailable
+    // listing — where the only amounts belong to the sponsored/"also bought" rails — returns one of
+    // those. price:null is the correct, useful answer there; a neighbour's price is a false reading.
+    'price MUST be the price of the product this page is about. If that product shows no price of its own —',
+    'it is unavailable, sold out, or only "see other sellers" — report price: null. NEVER report a price taken',
+    'from a sponsored, recommended, "customers also bought", carousel, or accessory item, or from a shipping fee.',
     'Set new_offer=true only if a discount, promo, coupon, or price drop is present now that was not in the baseline.'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
-export async function detectOffer({ apiKey, model, baselineText, currentText, lastPrice, currency }) {
+export async function detectOffer({ apiKey, model, baselineText, currentText, lastPrice, currency, knownAvailability }) {
   if (!apiKey) throw new Error('No API key configured');
   // Bounded like every other network call here — an untimed fetch can park a whole check pass
   // (checkDue runs watches sequentially), which is how passes end up outliving the alarm tick.
@@ -62,7 +70,7 @@ export async function detectOffer({ apiKey, model, baselineText, currentText, la
         max_tokens: 512,
         tools: [REPORT_TOOL],
         tool_choice: { type: 'tool', name: 'report_product' },
-        messages: [{ role: 'user', content: buildPrompt({ baselineText, currentText, lastPrice, currency }) }]
+        messages: [{ role: 'user', content: buildPrompt({ baselineText, currentText, lastPrice, currency, knownAvailability }) }]
       }),
       signal: ctrl.signal
     });
