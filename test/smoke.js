@@ -60,6 +60,25 @@ const path = require("path").resolve(__dirname, "..");
     console.log(stickyOk ? 'OK: lastPrice stays sticky through a check that read nothing' : (fail(`lastPrice=${w1.lastPrice} after a blank check`), ''));
     console.log(w1.lastPrice === null ? 'OK: lastPrice cleared once the product is out of stock with no price' : (fail(`lastPrice=${w1.lastPrice} on OOS with no price`), ''));
 
+    // 0b4. A check that could not read a field records it as unknown, not as a change. Regression for the
+    //      enhauto.com knob history: 211.89 / blank / 211.89 / blank / 169.51 … — every blank (an LLM reply
+    //      of price:null, "unknown") was a point, and the real 211.89 → 169.51 drop was never alerted
+    //      because the new price was compared with the blank before it.
+    const w2 = { history: [] };
+    recordObservation(w2, { t: 1, price: 211.89, currency: 'EUR', availability: 'in stock' });
+    const kBlank = recordObservation(w2, { t: 2, price: null, currency: 'EUR', availability: 'unknown' });
+    const kDrop = recordObservation(w2, { t: 3, price: 169.51, currency: 'EUR', availability: 'in stock' });
+    console.log(kBlank === null && w2.history.length === 2 && kDrop === 'drop'
+      ? 'OK: a blank check adds no history point, and the next real price still reads as a drop'
+      : (fail(`blank=${kBlank} drop=${kDrop} points=${JSON.stringify(w2.history)}`), ''));
+    const w3 = { history: [] };
+    recordObservation(w3, { t: 1, price: 100, currency: 'EUR', availability: 'InStock' });
+    const kNoAvail = recordObservation(w3, { t: 2, price: 100, currency: 'EUR', availability: null });
+    const kNoPrice = recordObservation(w3, { t: 3, price: null, currency: 'EUR', availability: 'InStock' });
+    console.log(kNoAvail === null && kNoPrice === null && w3.history.length === 1 && w3.lastPrice === 100
+      ? 'OK: an unread availability or an unread (in-stock) price carries forward instead of flapping'
+      : (fail(`noAvail=${kNoAvail} noPrice=${kNoPrice} points=${JSON.stringify(w3.history)} lastPrice=${w3.lastPrice}`), ''));
+
     // 0c. capturePage against a reduced mirror of an UNAVAILABLE amazon.pl listing (see the fixture's
     //     header). Regression for the "⬇️ Price dropped … is now 211 PLN" false alert: the product had
     //     no price and no buy button, "Chwilowo niedostępne." was plain text the English-only fallback
@@ -104,6 +123,34 @@ const path = require("path").resolve(__dirname, "..");
     await fx.goto(fixture('amazon-pl-instock.html'));
     const good = await fx.evaluate(applyRecipe, { price_selector: '#corePrice_feature_div .a-offscreen', currency_code: 'PLN', in_stock_selector: '#add-to-cart-button' });
     console.log(good.price === 1950.61 && good.availability === 'InStock' ? 'OK: a sound recipe still resolves price + stock' : (fail(`sound recipe → ${JSON.stringify(good)}`), ''));
+    const g1 = sanitizeRecipe({ price_global: 'dataLayer.find(d => d.page_view_stape)?.cart_state?.lines?.[0]?.price' }).price_global;
+    const g2 = sanitizeRecipe({ price_global: 'ecomm_items.0.price' }).price_global;
+    console.log(g1 === null && g2 === 'ecomm_items.0.price' ? 'OK: sanitizeRecipe drops a JS-expression price_global, keeps a dotted path' : (fail(`price_global sanitised to ${g1} / ${g2}`), ''));
+
+    // 0e. amazon.it with NO featured offer — regression for "ADAM Audio T5V … 59,99 €" (see the fixture's
+    //     header). The only prices that are this product's are its style swatches; the ad tile, the header
+    //     cart, the carousel, the hidden <option> and the far-off comparison table all carry other products'.
+    await fx.goto(fixture('amazon-it-no-featured-offer.html'));
+    const capIt = (await fx.evaluate(capturePage, null)).product || {};
+    console.log(capIt.price !== 59.99 ? 'OK: the sponsored-brand tile (nested past 14 levels) is not the product\'s price' : (fail('amazon.it fixture price=59.99 — the ad tile again'), ''));
+    console.log(capIt.price === 190 && capIt.currency === 'EUR' ? 'OK: no featured offer → the SELECTED style swatch price, 190 EUR' : (fail(`amazon.it fixture price=${capIt.price} ${capIt.currency} (${capIt.priceSource})`), ''));
+    console.log(capIt.availability == null ? 'OK: "Vedi tutte le opzioni d\'acquisto" alone says nothing about stock' : (fail(`amazon.it fixture availability=${capIt.availability}`), ''));
+    //     The snapshot the worker LLM derives a recipe from must offer the same — and only the same — candidates.
+    const { buildSnapshot } = await import(require('url').pathToFileURL(path + '/src/lib/recipe.js').href);
+    const snapIt = await fx.evaluate(buildSnapshot, null);
+    //     (Until v0.1.12 no snapshot carried ANY price candidate: a stateful /g regex test always read false.)
+    const snapTexts = snapIt.priceCandidates.map((c) => c.text);
+    console.log(snapTexts.length > 0 && snapTexts.every((t) => /190,00/.test(t)) ? `OK: recipe snapshot offers only the product's own price (${snapTexts.length} candidate(s); no cart, rail, ad, hidden, far or sibling-variant amounts)` : (fail(`snapshot candidates: ${JSON.stringify(snapTexts)}`), ''));
+    await fx.goto(fixture('amazon-pl-instock.html'));
+    const snapIn = (await fx.evaluate(buildSnapshot, null)).priceCandidates.map((c) => c.text);
+    console.log(snapIn.some((t) => /1950,61/.test(t)) && !snapIn.some((t) => /211,00|1 745/.test(t)) ? 'OK: in-stock snapshot carries the main price and none of the carousel ones' : (fail(`in-stock snapshot candidates: ${JSON.stringify(snapIn)}`), ''));
+    await fx.goto(fixture('amazon-it-no-featured-offer.html'));
+    //     A generic recipe selector must not resolve to a neighbour's element either.
+    const generic = await fx.evaluate(applyRecipe, { price_selector: '.a-price .a-offscreen', currency_code: 'EUR' });
+    console.log(generic.price == null ? 'OK: a generic recipe selector finds no price outside the product (rail / far table)' : (fail(`generic recipe price=${generic.price}`), ''));
+    await fx.goto(fixture('amazon-pl-unavailable.html'));
+    const snapPl = await fx.evaluate(buildSnapshot, null);
+    console.log(!snapPl.buttons.some((b) => /koszyka/i.test(b.text)) ? 'OK: the hidden keyboard-shortcut "Dodaj do koszyka" is never offered to the worker as a stock signal' : (fail(`snapshot buttons: ${JSON.stringify(snapPl.buttons)}`), ''));
     await fx.close();
 
     // 1. Service worker boots (manifest + ES module imports OK)

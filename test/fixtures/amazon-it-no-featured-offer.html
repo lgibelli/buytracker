@@ -1,0 +1,93 @@
+<!doctype html>
+<!-- Reduced mirror of the amazon.it listing that went into a watch as 59,99 € (2026-10-07,
+     /dp/B079LFYRCC?th=1, ADAM Audio T5V). When the watch was added the product had NO featured offer:
+     no #corePrice block and no add-to-cart, only "Vedi tutte le opzioni d'acquisto" and the per-style
+     swatch prices (12px). Every LARGER currency amount on the page belonged to something else:
+       * the header cart panel — the shopper's own cart: an item and the subtotal, under an <h1>;
+       * a hidden search-category <option> "Meno di 10€";
+       * the "Prendi in considerazione questi articoli alternativi" carousel above the title (17px);
+       * a "Marchio in questa categoria su Amazon" sponsored-brand tile (18px), nested deeper inside
+         #sims-simsContainer_feature_div_1 than the old 14-level rail walk reached;
+       * a comparison table far below the fold (18px) whose markup says nothing rail-like.
+     The old scan took the ad tile. The product's own price here is its SELECTED style swatch
+     (aria-checked="true"); the other swatch's price is a sibling variant's. -->
+<html lang="it"><head><meta charset="utf-8">
+<title>ADAM Audio T5V Monitor da studio | A due vie, tweeter U-ART, woofer da 5", 70 W : Amazon.it: Strumenti musicali</title>
+<style>
+  body { font-size: 13px; font-family: Arial, sans-serif; margin: 0; }
+  .a-offscreen { position: absolute !important; left: 0; top: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  .a-price { position: relative; display: inline-block; font-size: 17px; }
+  .a-size-large { font-size: 24px; }
+  .twisterSwatchPrice { font-size: 12px; }
+  .ewc-unit-price, .ewc-subtotal-amount { font-size: 14px; }
+  .sbx-desktop .a-price, .comparison-table .a-price { font-size: 18px; }
+  #ppd { display: flex; gap: 20px; }
+  #twister li { display: inline-block; list-style: none; margin-right: 8px; }
+</style></head>
+<body>
+<header id="navbar-main">
+  <div id="navbar">
+    <select id="searchDropdownBox"><option>Tutte le categorie</option><option>Meno di 10€</option></select>
+    <input type="text" name="field-keywords">
+    <div id="nav-flyout-ewc" class="nav-ewcFlyout">
+      <div id="ewc-content">
+        <h1 class="a-size-base">Subtotale</h1>
+        <span class="ewc-subtotal-amount">45,01 €</span>
+        <div class="ewc-item"><span class="ewc-unit-price">23,11 €</span></div>
+        <div class="ewc-item"><span class="ewc-unit-price">21,90 €</span></div>
+      </div>
+    </div>
+  </div>
+</header>
+<div id="dp">
+  <div id="above-dp-container">
+    <div id="desktop-dp-lpo_feature_div_0">
+      <h2>Prendi in considerazione questi articoli alternativi</h2>
+      <ol class="a-carousel"><li class="a-carousel-card"><span>Adam Audio Monitor Studio T5V</span>
+        <span class="a-price"><span class="a-offscreen">164,99€</span><span aria-hidden="true">164,99€</span></span></li></ol>
+    </div>
+  </div>
+  <div id="dp-container" class="a-container">
+    <div id="ppd">
+      <div id="centerCol">
+        <div id="title_feature_div"><h1 id="title"><span id="productTitle" class="a-size-large">ADAM Audio T5V Monitor da studio</span></h1></div>
+        <!-- no featured offer: NO #corePrice_feature_div -->
+        <div id="twister-plus-inline-twister"><div id="twister"><span>Nome stile: T5V</span>
+          <ul class="a-unordered-list a-nostyle a-button-list a-horizontal">
+            <li data-asin="B079LFYRCC"><span id="style_name_0" class="a-button a-button-selected a-button-toggle"><span class="a-button-inner">
+              <input name="0" class="a-button-input" type="submit" aria-checked="true" aria-labelledby="style_name_0-announce">
+              <span id="style_name_0-announce" class="a-button-text"><div><div><p>T5V</p></div><div><div id="apex_price"><div><div>
+                <span class="twisterSwatchPrice">190,00 €</span><span class="a-size-mini">1 opzione</span>
+              </div></div></div></div></div></span></span></span></li>
+            <li data-asin="B088KHXXX1"><span id="style_name_2" class="a-button a-button-toggle"><span class="a-button-inner">
+              <input name="2" class="a-button-input" type="submit" aria-checked="false" aria-labelledby="style_name_2-announce">
+              <span id="style_name_2-announce" class="a-button-text"><div><div><p>T8V</p></div><div><div id="apex_price_2"><div><div>
+                <span class="twisterSwatchPrice">219,00 €</span>
+              </div></div></div></div></div></span></span></span></li>
+          </ul>
+        </div></div>
+      </div>
+      <div id="rightCol">
+        <div id="buybox-see-all-buying-choices"><span class="a-button"><a class="a-button-text" role="button" href="#">Vedi tutte le opzioni d'acquisto</a></span></div>
+      </div>
+    </div>
+    <!-- "Marchio in questa categoria su Amazon": a sponsored-brand tile, 16 levels below the sims container -->
+    <div id="sims-simsContainer_feature_div_1" class="celwidget">
+      <div><div><div><div><div><div><div><div>
+        <div id="CardInstanceGk1gfN" class="_bGlmZ_container_yQKU1 sbx-desktop"><div><div><div><div><div><div>
+          <span>FEELWORLD LUT5 5.5" monitor da campo</span>
+          <span class="a-price"><span class="a-offscreen">59,99€</span><span aria-hidden="true">59,99€</span></span>
+        </div></div></div></div></div></div></div>
+      </div></div></div></div></div></div></div></div>
+    </div>
+    <div style="height: 2600px"><!-- product description, A+ content … --></div>
+    <!-- "Confronta con articoli simili": far below the fold, and nothing in its markup says "rail" -->
+    <div id="Desktop-Detailed-Evaluation-Zone">
+      <table class="comparison-table"><tr>
+        <td><span class="a-price"><span class="a-offscreen">149,00 €</span><span aria-hidden="true">149,00 €</span></span></td>
+        <td><span class="a-price"><span class="a-offscreen">219,00 €</span><span aria-hidden="true">219,00 €</span></span></td>
+      </tr></table>
+    </div>
+  </div>
+</div>
+</body></html>

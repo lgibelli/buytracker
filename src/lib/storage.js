@@ -47,17 +47,41 @@ export async function getWatch(id) {
   return (await getWatches())[id] || null;
 }
 
-export async function putWatch(watch) {
-  const watches = await getWatches();
-  watches[watch.id] = watch;
-  await chrome.storage.local.set({ watches });
-  return watch;
+// Every watch lives in ONE `watches` map and chrome.storage has no transactions, so each write is a
+// read-modify-write of the whole map. Two that overlap — a "check now" finishing while the scheduled
+// pass saves another watch — let the later one write back a map read before the earlier one landed,
+// silently undoing that check. Writes are serialised per JS context (the service worker does nearly
+// all of them); updateWatch also re-reads the watch inside the lock, so a caller never writes back a
+// copy that went stale while it was busy.
+let writeChain = Promise.resolve();
+function serial(fn) {
+  const run = writeChain.then(fn, fn);
+  writeChain = run.catch(() => {});
+  return run;
 }
 
-export async function deleteWatch(id) {
-  const watches = await getWatches();
-  delete watches[id];
-  await chrome.storage.local.set({ watches });
+// mutate(current | null) → the watch to store, or null to store nothing. Resolves to what was stored.
+export function updateWatch(id, mutate) {
+  return serial(async () => {
+    const watches = await getWatches();
+    const next = mutate(watches[id] || null);
+    if (!next) return null;
+    watches[id] = next;
+    await chrome.storage.local.set({ watches });
+    return next;
+  });
+}
+
+export function putWatch(watch) {
+  return updateWatch(watch.id, () => watch);
+}
+
+export function deleteWatch(id) {
+  return serial(async () => {
+    const watches = await getWatches();
+    delete watches[id];
+    await chrome.storage.local.set({ watches });
+  });
 }
 
 export function newId() {
@@ -103,26 +127,39 @@ export function trustedPrice(price, { structured, availability }) {
 export function recordObservation(watch, { t, price, currency, availability }) {
   watch.history = watch.history || [];
   const prev = watch.history[watch.history.length - 1] || null;
-  const sCur = availState(availability), sPrev = prev ? availState(prev.availability) : null;
+  // A field this check could not read is UNKNOWN, not changed. Recording the blank was what filled
+  // histories with a "no price / unknown" point every other check (an LLM reply of "unknown", a tab
+  // that loaded slowly) — and it hid real moves behind it: 211.89 → blank → 169.51 compared the new
+  // price against the blank, so the drop was never reported. So: a check that read nothing records
+  // nothing; an unreadable availability carries the last known one forward; an unreadable price
+  // carries the last one forward too — unless the product is now known to be unpurchasable, where a
+  // listing legitimately shows no price and holding the old one would keep a bystander's on the card.
+  const seenAvail = availState(availability) ? availability : null;
+  if (price == null && !seenAvail) {
+    if (currency) watch.currency = currency;
+    return null;
+  }
+  const avail = seenAvail || prev?.availability || null;
+  const sCur = availState(avail), sPrev = prev ? availState(prev.availability) : null;
+  const p = price ?? (sCur === 'out' ? null : (prev?.price ?? null));
   let kind = null;
   if (!prev) kind = 'new';
   else if (sPrev === 'out' && sCur === 'in') kind = 'restock';
   else if (sPrev === 'in' && sCur === 'out') kind = 'oos';
-  else if (price != null && prev.price != null && price < prev.price) kind = 'drop';
-  else if (price != null && prev.price != null && price > prev.price) kind = 'rise';
+  else if (p != null && prev.price != null && p < prev.price) kind = 'drop';
+  else if (p != null && prev.price != null && p > prev.price) kind = 'rise';
 
-  const priceChanged = !prev || prev.price !== price;
-  const availChanged = !prev || (prev.availability || '') !== (availability || '');
+  const priceChanged = !prev || prev.price !== p;
+  const availChanged = !prev || (prev.availability || '') !== (avail || '');
   if (priceChanged || availChanged) {
-    watch.history.push({ t, price: price ?? null, availability: availability || null });
+    watch.history.push({ t, price: p, availability: avail });
     if (watch.history.length > 1000) watch.history = watch.history.slice(-1000);
   }
   if (currency) watch.currency = currency;
-  // lastPrice is sticky for display, so a check that reads nothing doesn't blank the card — EXCEPT
-  // when the product is known to be unpurchasable AND carries no price: there is nothing current to
-  // show, and holding the old number is what kept a once-recorded bystander price on the card
-  // forever. The history (and the chart) still keeps every price the watch ever saw.
-  watch.lastPrice = price ?? (availState(availability) === 'out' ? null : (watch.lastPrice ?? null));
-  watch.lastAvailability = availability || watch.lastAvailability || null;
+  // lastPrice is sticky for display — EXCEPT when the product is known to be unpurchasable AND carries
+  // no price: there is nothing current to show, and holding the old number is what kept a
+  // once-recorded bystander price on the card forever. The history (and the chart) keeps every price.
+  watch.lastPrice = p ?? (sCur === 'out' ? null : (watch.lastPrice ?? null));
+  watch.lastAvailability = avail || watch.lastAvailability || null;
   return priceChanged || availChanged ? (kind || 'change') : null;
 }

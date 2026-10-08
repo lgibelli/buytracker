@@ -1,4 +1,4 @@
-import { getWatches, putWatch, deleteWatch, getSettings, getUi, setUi, availState } from './lib/storage.js';
+import { getWatches, updateWatch, deleteWatch, getSettings, getUi, setUi, availState } from './lib/storage.js';
 import { priceChartSVG } from './lib/chart.js';
 
 const listEl = document.getElementById('list');
@@ -233,7 +233,7 @@ document.addEventListener('click', async (e) => {
 
   if (act === 'open') { e.preventDefault(); chrome.tabs.create({ url: w.url }); }
   else if (act === 'check') await busy(() => chrome.runtime.sendMessage({ type: 'checkNow', id }));
-  else if (act === 'pause') { w.paused = !w.paused; await putWatch(w); await render(); }
+  else if (act === 'pause') { await updateWatch(id, (cur) => cur && { ...cur, paused: !cur.paused }); await render(); }
   else if (act === 'delete') { if (confirm('Delete this watch and its history?')) { await deleteWatch(id); await render(); } }
 });
 
@@ -241,10 +241,11 @@ document.addEventListener('change', async (e) => {
   const act = e.target.dataset?.act;
   const card = e.target.closest('.card');
   if (!act || !card) return;
-  const w = (await getWatches())[card.dataset.id];
-  if (!w) return;
-  if (act === 'interval') { w.intervalMin = Number(e.target.value); await putWatch(w); }
-  else if (act === 'target') { const v = parseFloat(e.target.value); w.targetPrice = isFinite(v) ? v : null; await putWatch(w); }
+  // Edit the stored watch, not the copy this popup rendered from: a check may have saved new results
+  // since, and writing the rendered copy back would undo them.
+  const id = card.dataset.id;
+  if (act === 'interval') { const v = Number(e.target.value); await updateWatch(id, (cur) => cur && { ...cur, intervalMin: v }); }
+  else if (act === 'target') { const v = parseFloat(e.target.value); await updateWatch(id, (cur) => cur && { ...cur, targetPrice: isFinite(v) ? v : null }); }
 });
 
 render();

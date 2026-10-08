@@ -44,7 +44,7 @@ const RECIPE_TOOL = {
       notes: { type: 'string', description: 'One short sentence on how you identified the price and stock signal.' },
       price_selector: { type: ['string', 'null'], description: 'CSS selector whose text (or attr) holds the current SELLING price (not the struck/list price). Copy one of the snapshot priceCandidates selectors when possible.' },
       price_attr: { type: ['string', 'null'], description: 'Attribute to read instead of element text, e.g. "content" for a <meta>. Null = use the element text.' },
-      price_global: { type: ['string', 'null'], description: 'Dotted path into a window global holding a numeric price, e.g. "ecomm_items.0.price". Use ONLY when no DOM selector works AND the global value matches the displayed (tax-inclusive) price.' },
+      price_global: { type: ['string', 'null'], description: 'Plain dotted path (keys and array indexes only — never code, calls or ?.) into a window global holding a numeric price, e.g. "ecomm_items.0.price". Use ONLY when no DOM selector works AND the global value matches the displayed (tax-inclusive) price of THIS product, not a cart line.' },
       currency_code: { type: ['string', 'null'], description: 'Fixed ISO code if this site always uses one currency, e.g. "EUR". Prefer this.' },
       currency_selector: { type: ['string', 'null'], description: 'Else a selector whose text contains the currency symbol/code.' },
       in_stock_selector: { type: ['string', 'null'], description: 'A selector that EXISTS in the DOM only when the product is purchasable (e.g. an enabled add-to-cart button). Used only if no out-of-stock signal matches.' },
@@ -137,6 +137,7 @@ const RAIL_SEL = /carousel|sponsored|sp[-_]detail|similar|\bsims|related|also[-_
 // CSS class (".b0a1c2d3e4") is not a product id and must not be thrown away.
 const ASIN_SEL = /B0[A-Z0-9]{8}(?![A-Z0-9])/;
 const PER_ITEM_SEL = /[#.][\w-]*(?:product|item|asin)[-_]\d{3,}/i;
+const GLOBAL_PATH = /^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/;
 
 async function deriveRecipe(snapshot, feedback, env) {
   const sys = [
@@ -218,6 +219,9 @@ async function deriveRecipe(snapshot, feedback, env) {
   for (const k of ['price_selector', 'currency_selector', 'in_stock_selector', 'out_of_stock_selector']) {
     if (recipe[k] && (RAIL_SEL.test(recipe[k]) || ASIN_SEL.test(recipe[k]) || PER_ITEM_SEL.test(recipe[k]))) recipe[k] = null;
   }
+  // The extension walks price_global as dot-separated keys and never evaluates it; a JS expression
+  // there ("dataLayer.find(d => …)?.price") can never resolve, so it must not count as a signal below.
+  if (recipe.price_global && !GLOBAL_PATH.test(recipe.price_global)) recipe.price_global = null;
   return { recipe, usage: data.usage || {}, model: body.model };
 }
 

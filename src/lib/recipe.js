@@ -12,7 +12,10 @@ export function buildSnapshot(selector) {
   // Whole-amount match, mirroring capture.js: grouped thousands or a plain digit run, cents optional.
   const NUM = /(?:\d{1,3}(?:[.,\s]\d{3})+|\d+)(?:[.,]\d{1,2})?/g;
   const CUR_TOK = /€|\$|£|zł|CHF|EUR|USD|GBP|PLN/gi;
-  const hasAmount = (s) => NUM.test(s.replace(/\s+/g, ' ')) && !!(NUM.lastIndex = 0);
+  // NUM is global (/g), so .test() is stateful: reset lastIndex BEFORE testing. The previous form,
+  // `NUM.test(s) && !!(NUM.lastIndex = 0)`, evaluated to !!0 === false on every match, so since v0.1.11
+  // no snapshot carried a single price candidate and every recipe was derived blind.
+  const hasAmount = (s) => { NUM.lastIndex = 0; return NUM.test(s.replace(/\s+/g, ' ')); };
   const curOf = (s) => /€|\bEUR\b/i.test(s) ? 'EUR' : /\$|\bUSD\b/i.test(s) ? 'USD' : /£|\bGBP\b/i.test(s) ? 'GBP' : /zł|\bPLN\b/i.test(s) ? 'PLN' : /\bCHF\b/i.test(s) ? 'CHF' : null;
   const STRUCK = /\b(old|was|strike|compare|regular|original|listino|previous|vecchio|barrat|precedente)\b/i;
   const isStruck = (el) => {
@@ -55,9 +58,62 @@ export function buildSnapshot(selector) {
     return s.replace(/\s+/g, ' ').trim();
   };
 
+  // Only elements that speak for THIS product go to the model — the same filters capturePage applies
+  // (KEEP IN SYNC with capture.js): not site chrome (Amazon's header cart panel lists the shopper's own
+  // cart), not a rail / ad tile, rendered, within about a screen of the product's title, and not an
+  // unselected variant option. The list is capped at 25 in document order, and on Amazon the header
+  // cart and the ad row above the title used up slots before the product's own price was reached; a
+  // hidden keyboard-shortcut "Dodaj do koszyka" button offered as a stock signal is how amazon.pl got
+  // a recipe that read "in stock" on every page.
+  const words = (s) => String(s || '').toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
+  const titleWords = new Set([...words(document.title), ...words(document.querySelector('meta[property="og:title"]')?.content)]);
+  let anchor = null;
+  {
+    let best = 0;
+    for (const h of document.querySelectorAll('h1')) {
+      if (!h.getClientRects().length) continue;
+      const w = words(h.innerText);
+      const score = w.length ? w.filter((x) => titleWords.has(x)).length / w.length : 0;
+      if (score > best) { best = score; anchor = h; }
+    }
+    if (best < 0.5) anchor = null;
+  }
+  const RAIL = /carousel|sponsored|\bsp_|similar|\bsims|related|also[-_ ]?(viewed|bought)|recommend|upsell|cross[-_]?sell|recently[-_ ]?viewed|bought[-_ ]?together|p13n/i;
+  const inRail = (el) => {
+    for (let p = el, i = 0; p && p !== document.body; p = p.parentElement, i++) {
+      if (anchor ? p.contains(anchor) : i >= 14) return false;
+      if (RAIL.test(String(p.id || '')) || RAIL.test(String(p.className || ''))) return true;
+    }
+    return false;
+  };
+  const isChrome = (el) => {
+    const c = el.closest('header, footer, nav, [role=banner], [role=navigation], [role=contentinfo]');
+    if (!c || (anchor && c.contains(anchor))) return false;
+    return !(/^(HEADER|FOOTER)$/.test(c.tagName) && !c.getAttribute('role') && c.parentElement?.closest('article, main, section, aside, [role=main]'));
+  };
+  const OPT_STATE = 'input[type=radio], [aria-checked]:not([role=checkbox]):not([role=switch]):not([type=checkbox]), [aria-selected]';
+  const isOn = (c) => c.checked === true || c.getAttribute('aria-checked') === 'true' || c.getAttribute('aria-selected') === 'true';
+  const unselectedOption = (el) => {
+    for (let p = el, i = 0; p && i < 16 && !(anchor && p.contains(anchor)); p = p.parentElement, i++) {
+      if (!p.matches('li, label, option, [role=option], [role=radio], [role=tab]')) continue;
+      const ctl = p.matches(OPT_STATE) ? [p] : [...p.querySelectorAll(OPT_STATE)];
+      if (ctl.length) return !ctl.some(isOn);
+    }
+    return false;
+  };
+  const aRect = anchor ? anchor.getBoundingClientRect() : null;
+  const REACH = Math.max(window.innerHeight || 0, 1200);
+  const nearAnchor = (el) => {
+    if (!aRect) return true;
+    const r = el.getBoundingClientRect();
+    return r.top < aRect.bottom + REACH && r.bottom > aRect.top - REACH / 2;
+  };
+  const aboutProduct = (el) => !isChrome(el) && !inRail(el) && el.getClientRects().length > 0 && nearAnchor(el);
+
   // Currency-tagged short texts → price candidates (with a class hint, so the model can pick a
   // class-based selector that generalises across the site's products rather than a brittle nth path).
   const priceCandidates = [];
+  const candEls = [];
   const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
   let el, visited = 0;
   while ((el = tw.nextNode())) {
@@ -66,7 +122,13 @@ export function buildSnapshot(selector) {
     const own = shortText(el);
     if (!own || own.length > 24) continue;
     if (!curOf(own) || !hasAmount(own) || (own.match(CUR_TOK) || []).length !== 1) continue;
+    if (!aboutProduct(el) || unselectedOption(el)) continue;
+    // Every wrapper around one price label qualifies too, and the walk meets the outermost first. Keep
+    // only the innermost of such a chain: it is the cleanest selector, and one amount repeated for each
+    // wrapper used up the 25 slots before the rest of the product's prices were reached.
+    if (candEls.length && candEls[candEls.length - 1].contains(el)) { candEls.pop(); priceCandidates.pop(); }
     let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }
+    candEls.push(el);
     priceCandidates.push({ selector: cssPath(el), cls: String(el.className || '').slice(0, 60) || null, text: own, fontSize: fs, struck: isStruck(el) });
   }
 
@@ -80,6 +142,7 @@ export function buildSnapshot(selector) {
     const label = (b.innerText || b.value || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
     if (!label || label.length > 40) continue;
     if (!OOS.test(label) && !BUY.test(label)) continue;
+    if (!aboutProduct(b)) continue;
     buttons.push({ selector: cssPath(b), cls: String(b.className || '').slice(0, 60) || null, text: label, disabled: !!(b.disabled || b.getAttribute('aria-disabled') === 'true') });
   }
 
@@ -143,17 +206,48 @@ export function applyRecipe(recipe) {
   // Rendered-ness is tested with getClientRects(), not offsetParent, so a position:fixed sticky buy
   // bar still counts as shown. It is NOT required when reading an attribute: <meta itemprop="price">
   // and friends are legitimately invisible.
+  // Same notion of "this product's element" as capturePage (KEEP IN SYNC with capture.js): the rail
+  // walk runs up to the first ancestor shared with the product's title (Amazon nests ad tiles deeper
+  // than the old 14-level cut-off), site chrome (the header cart panel) never counts, and a rendered
+  // match must sit within about a screen of the title — a generic ".a-price .a-offscreen" also matches
+  // every comparison-table cell further down.
+  const words = (s) => String(s || '').toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
+  const titleWords = new Set([...words(document.title), ...words(document.querySelector('meta[property="og:title"]')?.content)]);
+  let anchor = null;
+  {
+    let best = 0;
+    for (const h of document.querySelectorAll('h1')) {
+      if (!h.getClientRects().length) continue;
+      const w = words(h.innerText);
+      const score = w.length ? w.filter((x) => titleWords.has(x)).length / w.length : 0;
+      if (score > best) { best = score; anchor = h; }
+    }
+    if (best < 0.5) anchor = null;
+  }
   const RAIL = /carousel|sponsored|\bsp[-_]|similar|\bsims|related|also[-_ ]?(viewed|bought)|recommend|upsell|cross[-_]?sell|recently[-_ ]?viewed|bought[-_ ]?together|p13n/i;
   const inRail = (el) => {
-    for (let p = el, i = 0; p && i < 14; p = p.parentElement, i++) {
+    for (let p = el, i = 0; p && p !== document.body; p = p.parentElement, i++) {
+      if (anchor ? p.contains(anchor) : i >= 14) return false;
       if (RAIL.test(String(p.id || '')) || RAIL.test(String(p.className || ''))) return true;
     }
     return false;
   };
-  const shown = (el) => { try { return el.getClientRects().length > 0; } catch { return false; } };
+  const isChrome = (el) => {
+    const c = el.closest('header, footer, nav, [role=banner], [role=navigation], [role=contentinfo]');
+    if (!c || (anchor && c.contains(anchor))) return false;
+    return !(/^(HEADER|FOOTER)$/.test(c.tagName) && !c.getAttribute('role') && c.parentElement?.closest('article, main, section, aside, [role=main]'));
+  };
+  const aRect = anchor ? anchor.getBoundingClientRect() : null;
+  const REACH = Math.max(window.innerHeight || 0, 1200);
+  const nearAnchor = (el) => {
+    if (!aRect) return true;
+    const r = el.getBoundingClientRect();
+    return r.top < aRect.bottom + REACH && r.bottom > aRect.top - REACH / 2;
+  };
+  const shown = (el) => { try { return el.getClientRects().length > 0 && nearAnchor(el); } catch { return false; } };
   const find = (sel, mustShow) => {
     try {
-      for (const el of document.querySelectorAll(sel)) if (!inRail(el) && (!mustShow || shown(el))) return el;
+      for (const el of document.querySelectorAll(sel)) if (!inRail(el) && !isChrome(el) && (!mustShow || shown(el))) return el;
     } catch { /* bad selector */ }
     return null;
   };
@@ -222,6 +316,11 @@ const RAIL_SEL = /carousel|sponsored|sp[-_]detail|similar|\bsims|related|also[-_
 const ASIN_SEL = /B0[A-Z0-9]{8}(?![A-Z0-9])/;
 const PER_ITEM_SEL = /[#.][\w-]*(?:product|item|asin)[-_]\d{3,}/i;
 const SELECTOR_FIELDS = ['price_selector', 'currency_selector', 'in_stock_selector', 'out_of_stock_selector'];
+// applyRecipe resolves price_global by walking dot-separated keys ("ecomm_items.0.price"); it never
+// evaluates code. The model has emitted JS expressions there instead (enhauto.com got
+// "dataLayer.find(d => d.page_view_stape)?.cart_state?.lines?.[0]?.price" — the CART line, at that),
+// which can never resolve and only made a dead recipe look useful.
+const GLOBAL_PATH = /^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/;
 
 export function sanitizeRecipe(recipe) {
   if (!recipe || typeof recipe !== 'object') return recipe;
@@ -231,6 +330,7 @@ export function sanitizeRecipe(recipe) {
     const v = out[k];
     if (typeof v === 'string' && (RAIL_SEL.test(v) || ASIN_SEL.test(v) || PER_ITEM_SEL.test(v))) { out[k] = null; dropped.push(k); }
   }
+  if (typeof out.price_global === 'string' && !GLOBAL_PATH.test(out.price_global)) { out.price_global = null; dropped.push('price_global'); }
   if (dropped.length) out.dropped = dropped; // kept so a wrong-looking watch can be explained later
   return out;
 }

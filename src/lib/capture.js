@@ -87,6 +87,79 @@ export function capturePage(selector) {
 
   const pageText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 20000);
 
+  // ---- Where on the page is THIS product? (used by the buy-box scan and the DOM price scan) ----
+  // A product page shows many products: the cart panel in the header lists the shopper's own cart,
+  // ad tiles and rails show neighbours, comparison tables show rivals. On an amazon.it listing with no
+  // featured offer, a "brand in this category" ad tile 18px tall beat the product's own 12px variant
+  // swatch prices, and 59,99 € went into the watch as the product's price. Font size alone cannot
+  // tell them apart; structure and layout can, without any store- or language-specific knowledge.
+  //
+  // Anchor: the visible <h1> whose words best match the document / og:title — the product's own name.
+  // (Amazon also renders an <h1> "Subtotale" inside the header cart panel.) No match → no anchor, and
+  // every filter below that needs one stands down, falling back to the page-wide behaviour.
+  // KEEP IN SYNC with buildSnapshot / applyRecipe in recipe.js (injected functions can't share code).
+  const words = (s) => String(s || '').toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
+  const titleWords = new Set([...words(document.title), ...words(document.querySelector('meta[property="og:title"]')?.content)]);
+  let anchor = null;
+  {
+    let best = 0;
+    for (const h of document.querySelectorAll('h1')) {
+      if (!h.getClientRects().length) continue;
+      const w = words(h.innerText);
+      const score = w.length ? w.filter((x) => titleWords.has(x)).length / w.length : 0;
+      if (score > best) { best = score; anchor = h; }
+    }
+    if (best < 0.5) anchor = null;
+  }
+  // Recommendation / sponsored rails, by their class or id. A rail is a region that does NOT contain the
+  // product's heading, so with an anchor the walk runs all the way up to the first ancestor shared with
+  // it (Amazon nests ad tiles 15+ levels inside #sims-simsContainer…, past the old 14-level cut-off) and
+  // a page-level wrapper class above that can never disqualify the product itself.
+  const RAIL = /carousel|sponsored|\bsp_|similar|\bsims|related|also[-_ ]?(viewed|bought)|recommend|upsell|cross[-_]?sell|recently[-_ ]?viewed|bought[-_ ]?together|p13n/i;
+  const inRail = (el) => {
+    for (let p = el, i = 0; p && p !== document.body; p = p.parentElement, i++) {
+      if (anchor ? p.contains(anchor) : i >= 14) return false;
+      if (RAIL.test(String(p.id || '')) || RAIL.test(String(p.className || ''))) return true;
+    }
+    return false;
+  };
+  // Site chrome — header (Amazon's cart flyout: the shopper's own cart items and subtotal), navigation,
+  // footer — is never the product. A <header>/<footer> nested in article/main/section is the content's
+  // own header, and whatever contains the product heading is content by definition.
+  const isChrome = (el) => {
+    const c = el.closest('header, footer, nav, [role=banner], [role=navigation], [role=contentinfo]');
+    if (!c || (anchor && c.contains(anchor))) return false;
+    return !(/^(HEADER|FOOTER)$/.test(c.tagName) && !c.getAttribute('role') && c.parentElement?.closest('article, main, section, aside, [role=main]'));
+  };
+  // A price inside an UNSELECTED option is a sibling variant's (Amazon's style swatches, a subscription
+  // radio). Selection state is standard ARIA / form state, so this needs no store-specific knowledge.
+  // The option is the nearest list item / label / ARIA option around the price — Amazon's swatch <li>
+  // sits 13 levels above its price text — and never one that holds the product's title (that is the
+  // product's container, and an unticked "choose a size" radio inside it says nothing about the price).
+  const OPT_STATE = 'input[type=radio], [aria-checked]:not([role=checkbox]):not([role=switch]):not([type=checkbox]), [aria-selected]';
+  const isOn = (c) => c.checked === true || c.getAttribute('aria-checked') === 'true' || c.getAttribute('aria-selected') === 'true';
+  const unselectedOption = (el) => {
+    for (let p = el, i = 0; p && i < 16 && !(anchor && p.contains(anchor)); p = p.parentElement, i++) {
+      if (!p.matches('li, label, option, [role=option], [role=radio], [role=tab]')) continue;
+      const ctl = p.matches(OPT_STATE) ? [p] : [...p.querySelectorAll(OPT_STATE)];
+      if (ctl.length) return !ctl.some(isOn);
+    }
+    return false;
+  };
+  // The product's own price and buy button sit within about a screen of its title. Comparison tables,
+  // ad tiles and rails whose class names say nothing are further down. Rects are viewport-relative on
+  // both sides, so a page the user had scrolled when adding the watch measures the same.
+  const aRect = anchor ? anchor.getBoundingClientRect() : null;
+  const REACH = Math.max(window.innerHeight || 0, 1200);
+  const nearAnchor = (el) => {
+    if (!aRect) return true;
+    const r = el.getBoundingClientRect();
+    return r.top < aRect.bottom + REACH && r.bottom > aRect.top - REACH / 2;
+  };
+  // Everything a price or a buy button must pass to speak for this product. Cheap tests first; the rect
+  // tests force layout. getClientRects (not offsetParent) so a position:fixed sticky buy bar counts.
+  const aboutProduct = (el) => !isChrome(el) && !inRail(el) && el.getClientRects().length > 0 && nearAnchor(el);
+
   // The rendered buy-box is a vendor-agnostic availability hint. Scope to the add-to-cart form so
   // recommended-product buttons elsewhere on the page don't pollute it. It's a FALLBACK only: it
   // fills availability when the structured JSON-LD carried none, and must NOT override an explicit
@@ -108,10 +181,10 @@ export function capturePage(selector) {
         if (!label || label.length > 40) continue;
         // A control the shopper cannot see says nothing about stock — and a hidden one still answers
         // getAttribute('aria-label'). Amazon ships a permanent, hidden "Dodaj do koszyka" button in
-        // its global keyboard-shortcut menu, on every page, sold out or not. Tested after the cheap
-        // label filters because it forces layout; getClientRects (not offsetParent) so a
-        // position:fixed sticky buy bar still counts as visible.
-        if (!el.getClientRects().length) continue;
+        // its global keyboard-shortcut menu, on every page, sold out or not. Nor does one that belongs
+        // to another product: a rail tile's or comparison column's "Aggiungi al carrello" would mark an
+        // unavailable listing in stock. Tested after the cheap label filters because it forces layout.
+        if (!aboutProduct(el)) continue;
         const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
         if (OOS_RE.test(label)) { oos = true; break; } // OOS decides the verdict below regardless of later finds
         if (BUY_RE.test(label)) { buy = true; if (!disabled) buyEnabled = true; }
@@ -145,20 +218,14 @@ export function capturePage(selector) {
   // in DOM text — e.g. LordGun). The SELLING price is a currency-tagged amount that is NOT struck
   // through; list/old prices carry a <del>/<s>/<strike>, a line-through style, or an *-old/was/
   // compare/listino class. Runs only when the structured path found no price, so it never overrides
-  // JSON-LD or the Shopify .js data. Pick the most prominent (largest-font) live amount; first in
-  // document order on ties (the main offer precedes the recommendation rails, and "cheapest wins"
-  // manufactured a price drop whenever the product itself had no price).
-  // Amounts inside recommendation / sponsored / "also viewed" rails are never the main product's —
-  // on an unavailable listing they are the ONLY prices on the page, and one of them was reported as
-  // the product's own. The result is tagged priceSource:'dom' so the caller treats it as a guess.
+  // JSON-LD or the Shopify .js data. Pick the most prominent (largest-font) live amount; on ties the
+  // one nearest the product's title, then document order ("cheapest wins" manufactured a price drop
+  // whenever the product itself had no price).
+  // Only amounts that speak for THIS product compete (aboutProduct, unselectedOption above): never the
+  // header cart panel, a rail / ad tile, a hidden element, a sibling variant's swatch, or anything a
+  // screen or more away from the title. On an unavailable listing the neighbours' are the ONLY prices
+  // on the page, so this correctly finds none. Tagged priceSource:'dom' so the caller treats it as a guess.
   if (!product || product.price == null) {
-    const RAIL = /carousel|sponsored|\bsp_|similar|related|also[-_ ]?(viewed|bought)|recommend|upsell|cross[-_]?sell|recently[-_ ]?viewed|bought[-_ ]?together/i;
-    const inRail = (el) => {
-      for (let p = el, i = 0; p && i < 14; p = p.parentElement, i++) {
-        if (RAIL.test(String(p.id || '')) || RAIL.test(String(p.className || ''))) return true;
-      }
-      return false;
-    };
     const curOf = (s) => /€|\bEUR\b/i.test(s) ? 'EUR' : /\$|\bUSD\b/i.test(s) ? 'USD' : /£|\bGBP\b/i.test(s) ? 'GBP' : /zł|\bPLN\b/i.test(s) ? 'PLN' : /\bCHF\b/i.test(s) ? 'CHF' : null;
     // An amount is matched WHOLE: either separator-grouped thousands, or a plain run of digits, then
     // optional cents (optional so whole-number prices — $29, 199 — are not missed). The previous
@@ -208,12 +275,13 @@ export function capturePage(selector) {
       if (!amt) continue;
       const val = pickPrice(amt);
       if (val == null || val <= 0) continue;
-      if (inRail(el)) continue;
+      if (!aboutProduct(el) || unselectedOption(el)) continue;
       let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }
-      cands.push({ val, cur, struck: isStruck(el), fs });
+      const dist = aRect ? Math.abs(el.getBoundingClientRect().top - aRect.top) : 0;
+      cands.push({ val, cur, struck: isStruck(el), fs, dist });
     }
     const live = cands.filter((c) => !c.struck);
-    const pick = (live.length ? live : cands).sort((a, b) => b.fs - a.fs)[0]; // stable sort: DOM order on ties
+    const pick = (live.length ? live : cands).sort((a, b) => (b.fs - a.fs) || (a.dist - b.dist))[0]; // stable: DOM order last
     if (pick) {
       if (!product) product = { name: document.title || null, price: null, currency: null, availability: null };
       product.price = pick.val;
