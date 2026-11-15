@@ -36,8 +36,10 @@ main { padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
 .chev:hover { background: none; color: #e6edf3; }
 .card:not(.collapsed) .chev { transform: rotate(180deg); }
 .head-main { flex: 1; min-width: 0; }
-.title { font-weight: 600; font-size: 13px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.title a { color: #e6edf3; text-decoration: none; }
+.title { display: flex; font-weight: 600; font-size: 13px; line-height: 1.25; white-space: nowrap; overflow: hidden; }
+.title a { display: flex; min-width: 0; color: #e6edf3; text-decoration: none; }
+.t-head { min-width: 4em; overflow: hidden; text-overflow: ellipsis; }
+.t-tail { flex: none; max-width: 50%; margin-left: .3em; overflow: hidden; text-overflow: ellipsis; }
 .title a:hover { text-decoration: underline; }
 .sub { margin-top: 2px; font-size: 11px; color: #7a8794; display: flex; align-items: center; gap: 6px; }
 .card.collapsed .detail { display: none; }

@@ -1,5 +1,6 @@
 import { getWatches, updateWatch, deleteWatch, getSettings, getUi, setUi, availState } from './lib/storage.js';
 import { priceChartSVG } from './lib/chart.js';
+import { titleParts } from './lib/titles.js';
 
 const listEl = document.getElementById('list');
 const emptyEl = document.getElementById('empty');
@@ -60,7 +61,7 @@ function modeBadge(w) {
 // The headline price is `lastPrice`, which is sticky across checks that read nothing — but it is
 // cleared once a product is known unpurchasable with no price of its own (see recordObservation),
 // so the card reads "—" rather than presenting a stale number as this product's current price.
-function card(w) {
+function card(w, tp) {
   const cur = w.currency || '';
   const opts = INTERVALS.map(([v, l]) => `<option value="${v}" ${w.intervalMin === v ? 'selected' : ''}>${l}</option>`).join('');
   // Surface trouble in the collapsed row so a blocked/errored watch isn't hidden behind the fold.
@@ -69,7 +70,7 @@ function card(w) {
     <div class="head" data-act="toggle">
       <button class="chev" data-act="toggle" title="Show details" aria-label="Show details">▾</button>
       <div class="head-main">
-        <div class="title"><a href="${esc(w.url)}" data-act="open">${esc(w.title || w.url)}</a></div>
+        <div class="title"><a href="${esc(w.url)}" data-act="open" title="${esc(w.title || w.url)}"><span class="t-head">${esc(tp.head)}</span>${tp.tail ? `<span class="t-tail">${esc(tp.tail)}</span>` : ''}</a></div>
         <div class="sub">checked ${ago(w.lastCheckedAt)}${w.paused ? ' · paused' : ''} ${problem}</div>
       </div>
       <div class="price"><div class="now${stockState(w) === 'out' && w.lastPrice != null ? ' oos' : ''}">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${stockState(w) === 'out' ? '<div class="oos-tag">out of stock</div>' : deltaHtml(w.history)}</div>
@@ -114,7 +115,10 @@ async function render() {
   const [watches, settings, ui] = await Promise.all([getWatches(), getSettings(), getUi()]);
   const arr = Object.values(watches).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   emptyEl.classList.toggle('hidden', arr.length > 0);
-  listEl.innerHTML = arr.map(card).join('');
+  // Sibling listings (e.g. the 256 GB and 512 GB of one product) get the words that tell them apart
+  // pinned after their shared, ellipsized start.
+  const parts = titleParts(arr.map((w) => w.title || w.url));
+  listEl.innerHTML = arr.map((w, i) => card(w, parts[i])).join('');
 
   // Just-in-time hint: only once a real watch shows a store BuyTracker couldn't read on its own,
   // and only while neither fallback (worker or Claude key) is configured, and not yet dismissed.
