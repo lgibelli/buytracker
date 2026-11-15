@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><!-- The mark hand-tuned to the 16px pixel grid (strokes on whole pixels). Source of icon16.png -->
+  <defs><linearGradient id="bt-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3d8bff"/><stop offset="1" stop-color="#1656cc"/></linearGradient></defs>
+  <rect width="16" height="16" rx="3.5" fill="url(#bt-g)"/>
+  <path d="M3 5 H8 V11 H11" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="11.5" cy="11" r="2.5" fill="#fff"/>
+</svg>
