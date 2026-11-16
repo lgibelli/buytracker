@@ -1,13 +1,15 @@
-import { getWatches, updateWatch, deleteWatch, getSettings, getUi, setUi, availState } from './lib/storage.js';
+import { getWatches, updateWatch, deleteWatch, getSettings, setSettings, getUi, setUi, availState, SERVICE_URL } from './lib/storage.js';
+import { recipeHost, recipeServiceFor, recipeOfferFor } from './lib/recipe.js';
 import { priceChartSVG } from './lib/chart.js';
 import { titleParts } from './lib/titles.js';
 import { installErrorReporting } from './lib/report.js';
+import { ask, sendable, PAGE_DATA } from './lib/consent.js';
 
 installErrorReporting('popup');
 
 const listEl = document.getElementById('list');
 const emptyEl = document.getElementById('empty');
-const tipEl = document.getElementById('tip');
+const PRIVACY = SERVICE_URL + '/privacy#recipes';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = (n) => (n == null ? '—' : Number.isInteger(n) ? n : n.toFixed(2));
@@ -64,14 +66,33 @@ function modeBadge(w) {
 // The headline price is `lastPrice`, which is sticky across checks that read nothing — but it is
 // cleared once a product is known unpurchasable with no price of its own (see recordObservation),
 // so the card reads "—" rather than presenting a stale number as this product's current price.
-// `canFix`: the user has their own recipe worker, so a report re-derives the fix; without one, a report
-// can only go to the developer.
-function card(w, tp, canFix) {
+// Card for a store BuyTracker can't read on its own: offer the free recipe service for that store.
+// Nothing about the store is sent until the user presses Allow (see recipeServiceFor).
+function offerHtml(host) {
+  return `<div class="offer">
+      <p>BuyTracker can't read this store on its own. The free recipe service can work out how, once; after that, checks run in your browser.</p>
+      <div class="offer-row">
+        <button class="primary" data-act="offer-allow" type="button">Allow for ${esc(host)}</button>
+        <button class="offer-no" data-act="offer-decline" type="button">No thanks</button>
+        <span class="report-status"></span>
+      </div>
+      <p class="report-fine">Sends this page's address (without anything after “?”) and a short extract: its title, prices, buttons and opening text. Nothing about you. <a href="${PRIVACY}" data-act="link">Details</a></p>
+    </div>`;
+}
+
+// `canFix`: a report can re-derive this store's recipe (the free service is on, or the user runs their
+// own worker); without that it can only go to the developer. `ask`: submitting also allows the free
+// service for this store, so the form says so.
+function card(w, tp, settings) {
+  const host = recipeHost(w.url);
+  const canFix = !!settings.workerUrl || settings.recipeService !== false;
+  const ask = canFix && !recipeServiceFor(settings, w.url, SERVICE_URL);
+  const offer = w.recipeOffer && !w.selector && recipeOfferFor(settings, w.url);
   const cur = w.currency || '';
   const opts = INTERVALS.map(([v, l]) => `<option value="${v}" ${w.intervalMin === v ? 'selected' : ''}>${l}</option>`).join('');
   // Surface trouble in the collapsed row so a blocked/errored watch isn't hidden behind the fold.
   const problem = (w.lastStatus && w.lastStatus !== 'ok') ? statusBadge(w) : '';
-  return `<div class="card${expanded.has(w.id) ? '' : ' collapsed'}" data-id="${w.id}">
+  return `<div class="card${expanded.has(w.id) ? '' : ' collapsed'}" data-id="${esc(w.id)}">
     <div class="head" data-act="toggle">
       <button class="chev" data-act="toggle" title="Show details" aria-label="Show details">▾</button>
       <div class="head-main">
@@ -81,6 +102,7 @@ function card(w, tp, canFix) {
       <div class="price"><div class="now${stockState(w) === 'out' && w.lastPrice != null ? ' oos' : ''}">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${stockState(w) === 'out' ? '<div class="oos-tag">out of stock</div>' : deltaHtml(w.history)}</div>
       <button class="iconbtn danger del" data-act="delete" title="Delete watch" aria-label="Delete watch">🗑</button>
     </div>
+    ${offer ? offerHtml(host) : ''}
     <div class="detail">
       <div class="meta">
         ${statusBadge(w)}
@@ -89,7 +111,7 @@ function card(w, tp, canFix) {
         ${w.selector ? '<span class="badge" title="Semantic area watch">area</span>' : ''}
         <span>checks every</span>
         <select data-act="interval">${opts}</select>
-        <label>≤ <input class="target" type="number" step="0.01" placeholder="target" value="${w.targetPrice ?? ''}" data-act="target"></label>
+        <label>≤ <input class="target" type="number" step="0.01" placeholder="target" value="${esc(w.targetPrice ?? '')}" data-act="target"></label>
         <span style="margin-left:auto"></span>
         <button class="iconbtn" data-act="check" title="Check now" aria-label="Check now">↻</button>
         <button class="iconbtn" data-act="pause" title="${w.paused ? 'Resume' : 'Pause'}" aria-label="${w.paused ? 'Resume' : 'Pause'}">${w.paused ? '▶' : '⏸'}</button>
@@ -98,7 +120,7 @@ function card(w, tp, canFix) {
       ${w.lastSummary ? `<div class="summary">“${esc(w.lastSummary)}”</div>` : ''}
       ${w.selector ? '' : `<div class="report">
         <button class="report-open" data-act="report-open" type="button">${canFix ? 'Wrong result? Report &amp; fix' : 'Wrong result? Report it'}</button>
-        <div class="report-form hidden"${canFix ? ' data-fix="1"' : ''}>
+        <div class="report-form hidden"${canFix ? ' data-fix="1"' : ''}${ask ? ' data-allow="1"' : ''}>
           <div class="seg">
             <button type="button" data-act="report-choice" data-fb="in">In stock</button>
             <button type="button" data-act="report-choice" data-fb="out">Out of stock</button>
@@ -106,6 +128,7 @@ function card(w, tp, canFix) {
           </div>
           <input class="report-price hidden" type="number" step="0.01" inputmode="decimal" placeholder="correct price">
           <input class="report-note" type="text" maxlength="300" placeholder="optional hint: where should it look? (e.g. the price on the right)">
+          ${ask ? `<p class="report-fine">Submitting allows the free recipe service for ${esc(host)}: it gets this page's address (without anything after “?”) and a short extract of it (title, prices, buttons, opening text), to work out the fix. <a href="${PRIVACY}" data-act="link">Details</a></p>` : ''}
           ${canFix ? '<label class="report-send"><input type="checkbox"> Also send this report to the developer</label>' : ''}
           <p class="report-fine">${canFix ? 'If ticked, BuyTracker' : 'BuyTracker'} sends the page address (without anything after “?”), what it read here, and your correction. No account, no ID.</p>
           <div class="report-row">
@@ -119,21 +142,16 @@ function card(w, tp, canFix) {
 }
 
 async function render() {
-  const [watches, settings, ui] = await Promise.all([getWatches(), getSettings(), getUi()]);
+  // As the checks see them: in Firefox, stores allowed before it was asked show their offer again.
+  const [watches, settings, ui] = await Promise.all([getWatches(), getSettings().then(sendable), getUi()]);
   const arr = Object.values(watches).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   emptyEl.classList.toggle('hidden', arr.length > 0);
   // Sibling listings (e.g. the 256 GB and 512 GB of one product) get the words that tell them apart
   // pinned after their shared, ellipsized start.
   const parts = titleParts(arr.map((w) => w.title || w.url));
-  const canFix = !!(settings.workerUrl && settings.workerToken);
-  listEl.innerHTML = arr.map((w, i) => card(w, parts[i], canFix)).join('');
-
-  // Just-in-time hint: only once a real watch shows a store BuyTracker couldn't read on its own,
-  // and only while neither fallback (worker or Claude key) is configured, and not yet dismissed.
-  const configured = canFix || !!settings.apiKey;
-  const hasUnreadable = arr.some((w) => w.lastStatus === 'no_data' || w.lastStatus === 'blocked');
-  tipEl.classList.toggle('hidden', ui.dismissedWorkerHint || configured || !hasUnreadable);
-
+  // Every value card() puts in this HTML goes through esc(), or is a number the extension computed;
+  // the chart filters the page-supplied currency itself (chart.js). MV3's page CSP blocks inline script.
+  listEl.innerHTML = arr.map((w, i) => card(w, parts[i], settings)).join('');
   maybeShowTour(ui);
 }
 
@@ -148,30 +166,34 @@ document.getElementById('tourGo').addEventListener('click', async () => {
   await setUi({ seenTour: true });
 });
 
-document.getElementById('tipSettings').addEventListener('click', (e) => {
-  e.preventDefault();
-  chrome.runtime.openOptionsPage();
-});
+// The user's answer for a store. Allowing takes it off the declined list too (they can change their mind
+// in Settings, or by submitting a report).
+async function answerFor(host, allow) {
+  const s = await getSettings();
+  const hosts = new Set(s.recipeHosts || []), declined = new Set(s.recipeDeclined || []);
+  if (allow) { hosts.add(host); declined.delete(host); } else { declined.add(host); }
+  await setSettings({ recipeHosts: [...hosts], recipeDeclined: [...declined] });
+}
 
-document.getElementById('tipX').addEventListener('click', async () => {
-  tipEl.classList.add('hidden');
-  await setUi({ dismissedWorkerHint: true });
-});
+// A message along the bottom of the popup. Not alert(): Firefox can't show one in a popup.
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 6000);
+}
 
 async function busy(fn) {
-  try { await fn(); } catch (e) { alert(e.message || e); }
+  try { await fn(); } catch (e) { toast(e.message || String(e)); }
   await render();
 }
 
-// Send a user correction for a watch. With the user's own worker, its LLM re-derives the site's recipe
-// and the watch is re-checked: ~40s (tab + LLM), and the SW finishes even if the popup closes. It also
-// goes to the developer if the box is ticked. Without a worker, sending it to the developer is all
-// Submit does: pressing "Send to the developer" is the consent.
-async function submitReport(card, id) {
-  const form = card.querySelector('.report-form');
-  const canFix = !!form.dataset.fix;
-  const send = canFix ? form.querySelector('.report-send input').checked : true;
-  const statusEl = form.querySelector('.report-status');
+const NOT_ALLOWED = 'Firefox didn’t allow sending page data, so nothing was sent.';
+
+// What the report form says is wrong, or null (with a hint shown) when it says nothing yet.
+function readFeedback(form) {
   const choice = form.dataset.choice || null;
   const note = form.querySelector('.report-note').value.trim();
   const feedback = { note: note || null };
@@ -181,13 +203,29 @@ async function submitReport(card, id) {
     if (isFinite(p)) feedback.correct_price = p;
   }
   if (!feedback.correct_availability && feedback.correct_price == null && !feedback.note) {
+    const statusEl = form.querySelector('.report-status');
     statusEl.className = 'report-status warn'; statusEl.textContent = 'Pick what’s wrong, or add a note.';
-    return;
+    return null;
   }
+  return feedback;
+}
+
+// Send a user correction for a watch. With the user's own worker, its LLM re-derives the site's recipe
+// and the watch is re-checked: ~40s (tab + LLM), and the SW finishes even if the popup closes. It also
+// goes to the developer if the box is ticked. Without a worker, sending it to the developer is all
+// Submit does: pressing "Send to the developer" is the consent.
+// `consent` is Firefox's answer, asked in the click itself (see the click handler).
+async function submitReport(card, id, host, feedback, consent) {
+  const form = card.querySelector('.report-form');
+  const canFix = !!form.dataset.fix;
+  const send = canFix ? form.querySelector('.report-send input').checked : true;
+  const statusEl = form.querySelector('.report-status');
+  if (!(await consent)) { statusEl.className = 'report-status warn'; statusEl.textContent = NOT_ALLOWED; return; }
   const btn = form.querySelector('.report-submit');
   btn.disabled = true;
   statusEl.className = 'report-status'; statusEl.textContent = canFix ? 're-deriving… (you can close this)' : 'sending…';
   try {
+    if (form.dataset.allow) await answerFor(host, true);
     const r = await chrome.runtime.sendMessage({ type: 'reportWrong', id, feedback, send });
     if (!r?.ok) throw new Error(r?.error || (canFix ? 'failed to re-derive' : 'failed to send'));
     if (canFix) { await render(); return; } // reflects the corrected check
@@ -242,16 +280,57 @@ document.addEventListener('click', async (e) => {
     form.querySelector('.report-price').classList.toggle('hidden', actEl.dataset.fb !== 'price');
     return;
   }
-  if (act === 'report-submit') { await submitReport(card, id); return; }
+  // Both of these send page data. Firefox opens its own consent prompt only for a request made inside
+  // the click, before anything is awaited, so they ask here (lib/consent.js; in Chrome it's just yes).
+  let consent = null, feedback = null;
+  if (act === 'report-submit') {
+    feedback = readFeedback(card.querySelector('.report-form'));
+    if (!feedback) return;
+    consent = ask(PAGE_DATA);
+  }
+  if (act === 'offer-allow') consent = ask(PAGE_DATA);
 
   const watches = await getWatches();
   const w = watches[id];
   if (!w) return;
+  const host = recipeHost(w.url);
+
+  if (act === 'report-submit') { await submitReport(card, id, host, feedback, consent); return; }
+  if (act === 'link') { e.preventDefault(); chrome.tabs.create({ url: actEl.href }); return; }
+  if (act === 'offer-allow') {
+    // Allowed: re-check now, which derives this store's recipe (~10-40 s: tab + model). The service
+    // worker finishes the check even if the popup closes.
+    const offer = card.querySelector('.offer');
+    offer.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    const st = offer.querySelector('.report-status');
+    if (!(await consent)) {
+      offer.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+      st.className = 'report-status warn'; st.textContent = NOT_ALLOWED;
+      return;
+    }
+    st.className = 'report-status'; st.textContent = 'learning this store… (you can close this)';
+    await answerFor(host, true);
+    try {
+      const r = await chrome.runtime.sendMessage({ type: 'checkNow', id });
+      if (r && !r.ok) throw new Error(r.error || 'check failed');
+      await render();
+    } catch (err) { st.className = 'report-status err'; st.textContent = err.message || String(err); }
+    return;
+  }
+  if (act === 'offer-decline') { await answerFor(host, false); await render(); return; }
 
   if (act === 'open') { e.preventDefault(); chrome.tabs.create({ url: w.url }); }
   else if (act === 'check') await busy(() => chrome.runtime.sendMessage({ type: 'checkNow', id }));
   else if (act === 'pause') { await updateWatch(id, (cur) => cur && { ...cur, paused: !cur.paused }); await render(); }
-  else if (act === 'delete') { if (confirm('Delete this watch and its history?')) { await deleteWatch(id); await render(); } }
+  else if (act === 'delete') {
+    // The first click arms the button and a second one deletes. Not confirm(): Firefox can't show one
+    // in a popup.
+    if (actEl.classList.contains('armed')) { await deleteWatch(id); await render(); return; }
+    actEl.classList.add('armed');
+    actEl.textContent = 'Delete?';
+    actEl.title = 'Click again to delete this watch and its history';
+    setTimeout(() => { actEl.classList.remove('armed'); actEl.textContent = '🗑'; actEl.title = 'Delete watch'; }, 4000);
+  }
 });
 
 document.addEventListener('change', async (e) => {

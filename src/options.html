@@ -41,22 +41,6 @@
     .chip.warn{ color:var(--amber); }       .chip.warn .dot { background:var(--amber); }
     .chip.err { color:#f0a0a0; }            .chip.err .dot { background:var(--red); }
 
-    /* ---- worker hero ---- */
-    .hero { margin-top:14px; background:#0e141d; border:1px solid #23324c; border-radius:var(--radius); padding:16px 18px 4px; }
-    .hero-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-
-    .steps { list-style:none; margin:14px 0 0; padding:0; counter-reset:step; }
-    .step { display:grid; grid-template-columns:30px 1fr; gap:14px; padding:16px 0; }
-    .step + .step { border-top:1px solid #1c2740; }
-    .step::before {
-      counter-increment:step; content:counter(step);
-      width:28px; height:28px; border-radius:50%; display:grid; place-items:center;
-      font-size:13px; font-weight:650; color:var(--accent-ink);
-      background:rgba(31,111,235,.12); border:1px solid rgba(31,111,235,.38);
-    }
-    .step h3 { margin:2px 0 6px; font-size:13px; font-weight:620; }
-    .step .note { color:var(--muted); font-size:12.5px; line-height:1.5; margin:0 0 10px; }
-
     /* ---- form controls ---- */
     .field { margin-top:14px; }
     .field:first-child { margin-top:0; }
@@ -117,59 +101,62 @@
     #ver { color:var(--faint); font-size:11.5px; }
 
     @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+    .hostlist { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
+    .hostlist li { display:flex; align-items:center; gap:10px; font-size:12.5px; padding:7px 10px;
+      background:#10161d; border:1px solid var(--border); border-radius:8px; }
+    .hostlist .h { color:var(--ink); font-weight:560; }
+    .hostlist .state { color:var(--muted); font-size:11.5px; }
+    .hostlist .state.no { color:var(--amber); }
+    .hostlist .btn { margin-left:auto; padding:4px 10px; font-size:11.5px; }
   </style>
 </head>
 <body>
   <header>
     <h1><img src="../icons/logo.svg" alt="" width="24" height="24">BuyTracker</h1>
-    <p class="lede">Most stores are read automatically, for free. The options below add coverage for the ones BuyTracker can't parse on its own, so you only set up what you actually need.</p>
+    <p class="lede">Most stores are read automatically, for free. For the few BuyTracker can't parse on its own, the free recipe service can learn them, and you decide which stores it hears about.</p>
   </header>
 
-  <!-- PRIMARY: recipe worker -->
+  <!-- PRIMARY: the free recipe service (worker/), asked per store on the watch's card -->
   <section class="section">
-    <h2>Recipe worker <span class="pill rec">Recommended</span></h2>
-    <p class="section-lede">For stores the built-in reader can't parse. Your worker figures out how to read a site <em>once</em>, caches that recipe, and every later check runs from it, free and with no per-check AI cost.</p>
-
-    <div class="hero">
-      <div class="hero-top">
-        <div style="font-size:12.5px; color:var(--muted);">Self-hosted on Cloudflare, controlled entirely by you.</div>
-        <span class="chip" id="workerConn"><span class="dot"></span>Not set up</span>
-      </div>
-
-      <ol class="steps">
-        <li class="step">
-          <div>
-            <h3>Deploy the worker</h3>
-            <p class="note">A small Cloudflare Worker you host yourself, on the free plan. The guide walks through it in a few minutes and sets an <code>AUTH_TOKEN</code> you'll paste below.</p>
-            <a class="btn" href="https://github.com/lgibelli/buytracker/tree/main/worker" target="_blank" rel="noopener">Open setup guide →</a>
-          </div>
-        </li>
-        <li class="step">
-          <div>
-            <h3>Connect it</h3>
-            <div class="field">
-              <label for="workerUrl">Worker URL</label>
-              <input id="workerUrl" type="url" placeholder="https://buytracker-recipes.YOUR-SUBDOMAIN.workers.dev">
-            </div>
-            <div class="field">
-              <label for="workerToken">Worker token</label>
-              <input id="workerToken" type="password" placeholder="the AUTH_TOKEN you set on the worker">
-              <p class="hint">Must match the worker's <code>AUTH_TOKEN</code> secret. Sent only to your worker URL, nowhere else.</p>
-            </div>
-          </div>
-        </li>
-        <li class="step">
-          <div>
-            <h3>Test the connection</h3>
-            <p class="note">Confirms the URL is reachable and the token is accepted. Then hit Save.</p>
-            <div class="test-row">
-              <button id="testWorker" class="btn" type="button">Test connection</button>
-              <span id="workerStatus" class="chip"></span>
-            </div>
-          </div>
-        </li>
-      </ol>
+    <h2>Recipe service <span class="pill rec">Free</span></h2>
+    <p class="section-lede">For the few stores the built-in reader can't parse. The recipe service works out how to read a store <em>once</em>; after that, every check runs in your browser, with no AI and nothing sent.</p>
+    <div class="check">
+      <input id="recipeService" type="checkbox">
+      <label for="recipeService">Offer the recipe service for stores BuyTracker can't read</label>
     </div>
+    <p class="hint">Nothing about a store is sent until you allow that store on its watch. Then BuyTracker sends the product page's address (without anything after “?”) and a short extract of it (title, prices, buttons, opening text): once, and again only if the recipe stops reading the page. The service is shared and free, so it has a daily limit; past it, new stores wait until the next day. <a href="https://buytracker-recipes.nervoso.workers.dev/privacy#recipes" target="_blank" rel="noopener">Privacy policy</a></p>
+    <div class="field">
+      <label>Your stores</label>
+      <ul id="recipeHosts" class="hostlist"></ul>
+      <p class="hint" id="recipeHostsNone">None yet. When a watch's store can't be read, its card asks you.</p>
+    </div>
+
+    <details class="exp" id="expWorker">
+      <summary>
+        <span class="chev" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+        </span>
+        Your own recipe worker
+        <span class="pill exp">Advanced</span>
+        <span class="exp-sub">self-hosted alternative</span>
+      </summary>
+      <div class="exp-body">
+        <p class="callout">Run your own copy of the recipe service on Cloudflare's free plan. BuyTracker then uses it for every store, without asking per store, and nothing goes to the shared service. <a href="https://github.com/lgibelli/buytracker/tree/main/worker" target="_blank" rel="noopener">Setup guide</a></p>
+        <div class="field">
+          <label for="workerUrl">Worker URL</label>
+          <input id="workerUrl" type="url" placeholder="https://buytracker-recipes.YOUR-SUBDOMAIN.workers.dev">
+        </div>
+        <div class="field">
+          <label for="workerToken">Worker token (optional)</label>
+          <input id="workerToken" type="password" placeholder="the AUTH_TOKEN you set on the worker">
+          <p class="hint">Your worker's <code>AUTH_TOKEN</code> secret: it lets your corrections be logged on your worker. Sent only to your worker URL, nowhere else.</p>
+        </div>
+        <div class="test-row">
+          <button id="testWorker" class="btn" type="button">Test connection</button>
+          <span id="workerStatus" class="chip"></span>
+        </div>
+      </div>
+    </details>
   </section>
 
   <!-- Defaults -->
@@ -197,7 +184,7 @@
       <input id="sendErrorReports" type="checkbox">
       <label for="sendErrorReports">Send error reports to the developer</label>
     </div>
-    <p class="hint">Off unless you turn it on. When BuyTracker hits a bug in its own code, it sends the error message, where in the code it happened, your extension and Chrome versions. Web addresses and page text are removed first, and nothing about your watches is included. No account, no ID. Each error is sent at most once a day. <a href="https://buytracker-recipes.nervoso.workers.dev/privacy" target="_blank" rel="noopener">Privacy policy</a></p>
+    <p class="hint">Off unless you turn it on. When BuyTracker hits a bug in its own code, it sends the error message, where in the code it happened, your extension and browser versions. Web addresses and page text are removed first, and nothing about your watches is included. No account, no ID. Each error is sent at most once a day. <a href="https://buytracker-recipes.nervoso.workers.dev/privacy" target="_blank" rel="noopener">Privacy policy</a></p>
   </section>
 
   <!-- EXPERIMENTAL: direct Claude API -->
@@ -211,7 +198,7 @@
       <span class="exp-sub">pay-per-check alternative</span>
     </summary>
     <div class="exp-body">
-      <p class="callout">Instead of the worker, paste an Anthropic API key and BuyTracker calls Claude directly whenever a page has no structured price. Simplest to switch on, but you pay <strong>per check</strong> rather than once per site. Without either option, unreadable pages just fall back to a plain "this page changed" nudge.</p>
+      <p class="callout">Instead of recipes, paste an Anthropic API key and BuyTracker calls Claude directly whenever a page has no structured price. Simplest to switch on, but you pay <strong>per check</strong> rather than once per site. Without either option, unreadable pages just fall back to a plain "this page changed" nudge.</p>
 
       <div class="field">
         <label for="apiKey">Anthropic API key</label>
@@ -232,7 +219,7 @@
         <label for="useLlmFallback">Enable Claude fallback</label>
       </div>
 
-      <p class="callout"><strong>Cost:</strong> billed by Anthropic directly, only for checks that use the fallback, structured-price sites stay free. Each call sends ~4k tokens of page text for a tiny reply, so on Haiku it runs well under a cent (~$0.003). A site that never exposes a structured price, checked every 6h, is ~4 calls/day (roughly 1–2¢/day, under $1/month). The recipe worker removes even that.</p>
+      <p class="callout"><strong>Cost:</strong> billed by Anthropic directly, only for checks that use the fallback, structured-price sites stay free. Each call sends ~4k tokens of page text for a tiny reply, so on Haiku it runs well under a cent (~$0.003). A site that never exposes a structured price, checked every 6h, is ~4 calls/day (roughly 1–2¢/day, under $1/month). A recipe removes even that.</p>
 
       <div class="test-row">
         <button id="test" class="btn" type="button">Test API key</button>

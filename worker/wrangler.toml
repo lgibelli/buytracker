@@ -13,28 +13,28 @@ rules = [{ type = "Text", globs = ["**/*.html"], fallthrough = true }]
 binding = "RECIPES"
 id = "bdfacf3797584743a270c2c6211a84b6"
 
-# Optional: user "report wrong result" submissions are logged here for you to review later
-# (host, url, the correction, note, outcome, cost). Reporting still works without this binding —
-# the worker skips logging when it's absent, so this stays commented out by default (a placeholder
-# id would fail `wrangler deploy`). To enable: create the DB, UNCOMMENT the block below, paste the
-# printed id, then apply the migration:
-#   wrangler d1 create buytracker-reports
+# Rate-limit counters, the daily AI meter, and the reports users choose to send (required). Create once:
+#   wrangler d1 create buytracker-reports      # paste the printed id below
 #   wrangler d1 migrations apply buytracker-reports --remote
-# Review anytime with:  wrangler d1 execute buytracker-reports --remote \
-#   --command "SELECT ts,host,correct_availability,correct_price,note,outcome FROM reports ORDER BY ts DESC LIMIT 50"
 [[d1_databases]]
 binding = "REPORTS"
 database_name = "buytracker-reports"
 database_id = "79216ad0-0b93-4901-bd15-07e35723d606"
 
+# Workers AI writes the recipes (worker/src/derive.js). Free tier: 10,000 neurons a day.
+[ai]
+binding = "AI"
+
 [vars]
-# Default model for recipe derivation. Override per-deploy if you like.
-MODEL = "claude-haiku-4-5"
+# Model for recipe derivation: Qwen3 30B wrote correct recipes on every store tested, at ~30 neurons each.
+MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"
 
-# Hard daily spend cap (USD) for derivation, metered from real token usage. Once reached, POST
-# /recipe returns 429 with Retry-After until UTC midnight; the extension backs off and retries.
-DAILY_BUDGET_USD = "1"
+# Hard daily cap on AI spend, in Workers AI neurons: reserved before each call, settled from the reply.
+# Once reached, POST /recipe returns 429 with Retry-After until UTC midnight; the extension backs off and
+# retries. 3,300 is a third of Workers AI's free 10,000 a day, which the whole account shares — on the
+# Workers Paid plan usage above 10,000 is billed, so this keeps room for anything else on the account.
+DAILY_NEURONS = "3300"
 
-# Secrets (DO NOT put these here — set them with `wrangler secret put`):
-#   wrangler secret put ANTHROPIC_KEY   # your sk-ant-... key, kept server-side
-#   wrangler secret put AUTH_TOKEN      # a long random string the extension must send
+# Secret (DO NOT put it here — set it with `wrangler secret put`):
+#   wrangler secret put AUTH_TOKEN   # a long random string: unlocks the logs and DELETE /recipe for you,
+#                                    # and keys the hash used to rate-limit clients

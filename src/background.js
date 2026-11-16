@@ -2,11 +2,12 @@ import { extractFromHtml, detectBlock, fnv1a } from './lib/extract.js';
 import { detectOffer } from './lib/llm.js';
 import { capturePage } from './lib/capture.js';
 import { pickArea } from './lib/picker.js';
-import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitizeRecipe } from './lib/recipe.js';
+import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitizeRecipe, recipeServiceFor, recipeOfferFor } from './lib/recipe.js';
 import {
-  getSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice
+  getSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice, SERVICE_URL
 } from './lib/storage.js';
 import { installErrorReporting, reportError, isBug, sendFeedback } from './lib/report.js';
+import { sendable } from './lib/consent.js';
 
 // Error reports go out only while the user has them on in Settings (off by default): uncaught errors
 // here, and caught ones that are bugs in our own code rather than a store or the network failing.
@@ -159,7 +160,7 @@ async function pauseDerivation(retryAfterSec) {
   const { recipeBudget } = await chrome.storage.local.get('recipeBudget');
   await chrome.storage.local.set({ recipeBudget: { pausedUntil: Date.now() + ms, notifiedDay: day } });
   if (recipeBudget?.notifiedDay !== day) {
-    toast('💸 Daily LLM budget reached', 'Recipe derivation is paused until the quota resets. Checks keep running; derivation retries automatically tomorrow.');
+    toast('BuyTracker recipe service', 'Today\'s limit is reached, so new store recipes wait until tomorrow. Checks keep running as usual.');
   }
 }
 
@@ -184,7 +185,7 @@ async function extractViaTab(url, selector, opts = {}) {
     // Where the price came from: 'jsonld' (schema.org) and 'recipe' (site-specific) are deterministic;
     // 'dom' is capturePage's rendered-text guess — the most prominent currency amount on the page.
     let priceSource = price != null ? (result.product?.priceSource || 'dom') : null;
-    let recipeUsed = false, recipeDerived = false, recipeError = null;
+    let recipeUsed = false, recipeDerived = false, recipeError = null, recipeOffer = false;
 
     // A site-specific recipe is authoritative over the generic heuristic — it was derived precisely
     // because the heuristic got this site wrong. It only ever sets a field it actually resolves.
@@ -216,19 +217,23 @@ async function extractViaTab(url, selector, opts = {}) {
     const s = opts.settings;
     // Derive when no recipe exists yet; only RE-derive a cached one once it's gone stale — otherwise a
     // legitimately-absent signal (e.g. price hidden while out of stock) would re-derive every check.
+    // Nothing about a store leaves the browser until the user allowed the recipe service for it (or runs
+    // their own): until then the watch just carries the offer, shown on its card.
     const stale = cached && Date.now() - (cached.cachedAt || 0) > RECIPE_STALE_MS;
-    if (recipesAllowed && opts.derive && stillMissing && s?.workerUrl && s?.workerToken && (!cached || stale)) {
+    const svc = s ? recipeServiceFor(s, url, SERVICE_URL) : null;
+    if (recipesAllowed && opts.derive && stillMissing && !svc && s && recipeOfferFor(s, url)) recipeOffer = true;
+    if (recipesAllowed && opts.derive && stillMissing && svc && (!cached || stale)) {
       if (Date.now() < await derivePausedUntil()) {
-        recipeError = 'recipe: daily LLM budget reached — retrying automatically tomorrow';
+        recipeError = 'recipe: the recipe service reached today\'s limit — retrying automatically tomorrow';
       } else {
         try {
           const snapshot = await runInPage(tab.id, buildSnapshot, [selector || null]);
-          const fresh = sanitizeRecipe(await deriveRecipe({ workerUrl: s.workerUrl, token: s.workerToken, url, snapshot, force: !!cached }));
+          const fresh = sanitizeRecipe(await deriveRecipe({ workerUrl: svc.url, token: svc.token, url, snapshot, force: !!cached }));
           if (fresh) { await putRecipe(url, fresh); recipeDerived = true; apply(await runInPage(tab.id, applyRecipe, [fresh])); }
         } catch (e) {
           if (e.status === 429) {
             await pauseDerivation(e.retryAfterSec);
-            recipeError = 'recipe: daily LLM budget reached — retrying automatically tomorrow';
+            recipeError = 'recipe: the recipe service reached today\'s limit — retrying automatically tomorrow';
           } else {
             recipeError = 'recipe: ' + String(e.message || e);
           }
@@ -242,7 +247,7 @@ async function extractViaTab(url, selector, opts = {}) {
       status: 'ok', title: result.title, price, currency, availability, priceSource,
       hasStructuredPrice: price != null && priceSource !== 'dom',
       fullText: full, areaText: area, textHash: fnv1a((area || full).slice(0, 20000)),
-      viaTab: true, recipeUsed, recipeDerived, recipeError
+      viaTab: true, recipeUsed, recipeDerived, recipeError, recipeOffer
     };
   } finally { try { await chrome.tabs.remove(tab.id); } catch { /* gone */ } }
 }
@@ -255,16 +260,18 @@ async function reportWrong(id, feedback, send) {
   const watch = await getWatch(id);
   if (!watch) throw new Error('Watch not found');
   if (watch.selector) throw new Error('Reporting a wrong result works on whole-page watches, not area watches.');
-  const settings = await getSettings();
+  const settings = await sendable(await getSettings());
   const recipe = await getRecipe(watch.url).catch(() => null); // the recipe that read it wrong
   const share = (outcome, after) => sendFeedback({ watch, recipe, feedback, outcome, after });
-  if (!settings.workerUrl || !settings.workerToken) {
-    if (!send) throw new Error('Set up the recipe worker in Settings first — that’s what re-derives the fix.');
+  // The popup allows the store before asking for a fix (submitting the form is the consent).
+  const svc = recipeServiceFor(settings, watch.url, SERVICE_URL);
+  if (!svc) {
+    if (!send) throw new Error('Turn on the recipe service in Settings first — that’s what re-derives the fix.');
     await share('not_attempted', null);
     return { watch, sent: true };
   }
   let after;
-  try { after = await rederiveFor(watch, feedback, settings); }
+  try { after = await rederiveFor(watch, feedback, svc); }
   catch (e) { if (send) await share('error', null).catch(() => {}); throw e; }
   const sent = send ? await share(fixOutcome(feedback, after), after).then(() => true, () => false) : false;
   return { watch: after, sent };
@@ -283,21 +290,20 @@ function fixOutcome(fb, w) {
 // describes the main product, not an area sub-region). Bypasses the weekly staleness cap on purpose —
 // the user just told us the cached recipe is wrong — but still respects the worker's hard daily
 // budget (429 → park until the quota resets, same as the auto-derive path).
-async function rederiveFor(watch, feedback, settings) {
+async function rederiveFor(watch, feedback, svc) {
   const id = watch.id;
-  if (Date.now() < await derivePausedUntil()) {
-    throw new Error('Daily LLM budget reached — re-derivation retries automatically tomorrow.');
-  }
+  const limitMsg = 'The recipe service reached today’s limit. Try again tomorrow.';
+  if (Date.now() < await derivePausedUntil()) throw new Error(limitMsg);
 
   const tab = await chrome.tabs.create({ url: watch.url, active: false });
   try {
     await waitForComplete(tab.id, 35000);
     await sleep(2500);
     const snapshot = await runInPage(tab.id, buildSnapshot, [null]);
-    const fresh = await deriveRecipe({ workerUrl: settings.workerUrl, token: settings.workerToken, url: watch.url, snapshot, force: true, feedback });
+    const fresh = await deriveRecipe({ workerUrl: svc.url, token: svc.token, url: watch.url, snapshot, force: true, feedback });
     if (fresh) await putRecipe(watch.url, fresh);
   } catch (e) {
-    if (e.status === 429) { await pauseDerivation(e.retryAfterSec); throw new Error('Daily LLM budget reached — re-derivation retries automatically tomorrow.'); }
+    if (e.status === 429) { await pauseDerivation(e.retryAfterSec); throw new Error(limitMsg); }
     throw e;
   } finally {
     try { await chrome.tabs.remove(tab.id); } catch { /* gone */ }
@@ -514,7 +520,8 @@ function checkWatch(watch) {
 }
 
 async function runCheck(watch) {
-  const settings = await getSettings();
+  // What Firefox hasn't allowed to leave the browser is off for this check (lib/consent.js).
+  const settings = await sendable(await getSettings());
   const now = Date.now();
   const needPrice = watch.watchType !== 'availability';
   const needAvail = watch.watchType !== 'price';
@@ -530,7 +537,11 @@ async function runCheck(watch) {
     // A tab renders client-side price/stock (hydrated JSON-LD, the buy box, the DOM price, a per-site
     // recipe) that a raw fetch can't see — many stores expose nothing without JS. Tab failures are
     // non-fatal: the check falls back to what the static fetch read.
-    const viaTab = () => extractViaTab(watch.url, watch.selector, tabOpts).catch((e) => ({ status: 'error', error: e }));
+    // Whether a tab read this check found the recipe service could help (see extractViaTab).
+    let tabOffer = ex.viaTab ? !!ex.recipeOffer : null;
+    const viaTab = () => extractViaTab(watch.url, watch.selector, tabOpts)
+      .then((r) => { if (r.viaTab) tabOffer = !!r.recipeOffer; return r; })
+      .catch((e) => ({ status: 'error', error: e }));
     // Deterministic before paid: when the static fetch is blocked or lacks a signal this watch needs,
     // render the page in a tab BEFORE the LLM reads anything. The old order asked the LLM to read the
     // static text first and opened the tab only if it came back empty — so a store with no JSON-LD
@@ -583,6 +594,12 @@ async function runCheck(watch) {
       await saveChecked(watch); return watch;
     }
 
+    // Offer the recipe service on the card only while this watch still lacks a signal it needs (a
+    // price missing because the product is out of stock is not lacking) and only a tab read can tell.
+    if (tabOffer != null) {
+      const lacking = (needPrice && res.price == null && availState(res.availability) !== 'out') || (needAvail && res.availability == null);
+      watch.recipeOffer = tabOffer && lacking;
+    }
     const areaOkFinal = !watch.selector || !!ex.areaText;
     if (watch.selector && areaOkFinal && ex.textHash) watch.lastAreaHash = ex.textHash;
     if (!watch.selector && ex.textHash) watch.lastLlmHash = ex.textHash;

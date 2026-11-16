@@ -2,11 +2,13 @@
   "name": "buytracker-recipes",
   "version": "0.1.0",
   "private": true,
-  "description": "Cloudflare Worker that derives reusable per-site product-parse recipes with Claude",
+  "license": "AGPL-3.0-or-later",
+  "description": "BuyTracker recipe service: per-store product-parse recipes from Workers AI, plus opt-in report intake",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "feedback": "wrangler d1 execute buytracker-reports --remote --command \"SELECT datetime(ts/1000, 'unixepoch') AS at, version, url, read_price, read_availability, correct_price, correct_availability, note, outcome FROM feedback ORDER BY ts DESC LIMIT 50\"",
+    "usage": "wrangler d1 execute buytracker-reports --remote --command \"SELECT day, key, n FROM intake_counts WHERE key IN ('neurons:*', 'derive:*') ORDER BY day DESC LIMIT 14\"",
     "errors": "wrangler d1 execute buytracker-reports --remote --command \"SELECT datetime(ts/1000, 'unixepoch') AS at, version, context, name, message, browser FROM errors ORDER BY ts DESC LIMIT 50\""
   },
   "devDependencies": {

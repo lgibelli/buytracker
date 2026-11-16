@@ -2,7 +2,10 @@ const { chromium } = require('playwright');
 const path = require("path").resolve(__dirname, "..");
 
 (async () => {
-  const ctx = await chromium.launchPersistentContext(require('os').tmpdir() + '/buytracker-test-profile', {
+  // A fresh profile each run: a watch left by the last run would hide the empty state checked below.
+  const profile = require('os').tmpdir() + '/buytracker-test-profile';
+  require('fs').rmSync(profile, { recursive: true, force: true });
+  const ctx = await chromium.launchPersistentContext(profile, {
     channel: 'chromium',
     headless: true,
     args: [`--disable-extensions-except=${path}`, `--load-extension=${path}`],
@@ -183,10 +186,15 @@ const path = require("path").resolve(__dirname, "..");
     await opts.waitForTimeout(500);
     console.log(oerrs.length === 0 ? 'OK: options page renders' : (fail('options errors: ' + oerrs.join(' | ')), ''));
 
-    // 5. END-TO-END: open the real magbak product page (currently OOS) and add a watch for it.
+    // 5. END-TO-END: open a real magbak product page and add a watch for it. The expected price and stock
+    // come from the store's own Shopify product JSON, read now: the product's price and stock change.
     const prod = await ctx.newPage();
     await prod.goto('https://eu.magbak.com/products/magbak-phone-mount-and-charger-for-tesla-25w', { waitUntil: 'load', timeout: 60000 }).catch(() => {});
     await prod.waitForTimeout(3000);
+    const truth = await prod.evaluate(() => fetch(location.pathname + '.js').then((r) => r.json())
+      .then((j) => { const v = j.variants.find((x) => x.available) || j.variants[0]; return { price: v.price / 100, inStock: !!v.available }; }))
+      .catch(() => null);
+    if (!truth) fail('could not read the product JSON for the expected price');
     await prod.bringToFront();
     const resp = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'addCurrentTab' }));
     if (!resp || !resp.ok) { fail('addCurrentTab: ' + JSON.stringify(resp)); }
@@ -194,10 +202,10 @@ const path = require("path").resolve(__dirname, "..");
       const w = resp.watch;
       console.log(`OK: watch created — title="${(w.title || '').slice(0, 50)}…"`);
       const point = (w.history || [])[0] || {};
-      const availOk = /outofstock/i.test(point.availability || '');
-      const priceOk = point.price === 87.95;
-      console.log(priceOk ? 'OK: captured price 87.95' : (fail(`price=${point.price}`), ''));
-      console.log(availOk ? 'OK: captured availability OutOfStock (restock watch armed)' : (fail(`availability=${point.availability}`), ''));
+      const availOk = truth && (truth.inStock ? /instock/i : /outofstock/i).test(point.availability || '');
+      const priceOk = truth && point.price === truth.price;
+      console.log(priceOk ? `OK: captured price ${point.price} (the store's own data)` : (fail(`price=${point.price}, store says ${truth?.price}`), ''));
+      console.log(availOk ? `OK: captured availability ${point.availability} (the store's own data)` : (fail(`availability=${point.availability}, store says ${truth?.inStock ? 'in' : 'out of'} stock`), ''));
 
       // 6. checkNow exercises the Shopify fast-path from the service worker
       const r2 = await popup.evaluate((id) => chrome.runtime.sendMessage({ type: 'checkNow', id }), w.id);
@@ -205,7 +213,7 @@ const path = require("path").resolve(__dirname, "..");
       else {
         const w2 = r2.watch;
         console.log(`OK: checkNow ran — status=${w2.lastStatus} price=${w2.lastPrice} avail=${w2.lastAvailability} points=${w2.history.length}`);
-        if (w2.lastStatus !== 'ok' || w2.lastPrice !== 87.95) fail('checkNow unexpected result');
+        if (w2.lastStatus !== 'ok' || w2.lastPrice !== truth?.price) fail('checkNow unexpected result');
         if (w2.history.length !== 1) fail(`history grew on no-change: ${w2.history.length} points`);
         else console.log('OK: no-change check appended no history point (step-series invariant)');
       }

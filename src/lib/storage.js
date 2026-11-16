@@ -1,13 +1,23 @@
 // Thin wrappers over chrome.storage.local. Watches (incl. their price history) live under `watches`.
 
+// The free recipe service everyone can use (worker/), and where opt-in reports go (lib/report.js).
+export const SERVICE_URL = 'https://buytracker-recipes.nervoso.workers.dev';
+
 const DEFAULT_SETTINGS = {
   provider: 'anthropic',
   model: 'claude-haiku-4-5',
   apiKey: '',
   defaultIntervalMin: 360, // 6h — these are non-urgent buys
   useLlmFallback: true,
-  // Optional recipe-derivation worker (see worker/). When both are set, sites the generic extractors
-  // can't parse get a per-site recipe derived once and cached, instead of an LLM call every check.
+  // Stores the generic extractors can't read get a per-site recipe, derived once and cached, instead of
+  // an LLM call every check. By default from the free recipe service (SERVICE_URL), and only for stores
+  // the user allowed on the watch's card: recipeHosts. recipeDeclined are the stores they said no to.
+  // recipeService off = never offered, never used.
+  recipeService: true,
+  recipeHosts: [],
+  recipeDeclined: [],
+  // A self-hosted copy of the service (see worker/) replaces it for every store, with no per-store
+  // prompt: the user runs it. The token is optional (it unlocks that worker's operator endpoints).
   workerUrl: '',
   workerToken: '',
   // Send reports of bugs in BuyTracker's own code to the developer (src/lib/report.js). Opt-in.

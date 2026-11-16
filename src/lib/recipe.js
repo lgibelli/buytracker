@@ -103,12 +103,48 @@ export function buildSnapshot(selector) {
   };
   const aRect = anchor ? anchor.getBoundingClientRect() : null;
   const REACH = Math.max(window.innerHeight || 0, 1200);
+  // The product's own block: the smallest ancestor of the title (up to 8 levels, never <body>, at most
+  // a few screens tall) that also holds a rendered buy control. A long option picker can push the price
+  // and the add-to-cart button well over a screen below the title (eu.magbak.com's phone cases: 1,700px
+  // down), and they are still the product's own. Outside that block the distance rule stands.
+  let block = null;
+  if (anchor) {
+    const BUY_CTL = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|do koszyka|kup teraz|ajouter au panier|añadir a la cesta/i;
+    for (let p = anchor.parentElement, i = 0; p && p !== document.body && i < 8 && !block; p = p.parentElement, i++) {
+      if (p.getBoundingClientRect().height > 4 * REACH) break;
+      for (const b of p.querySelectorAll('button, input[type=submit], [role=button]')) {
+        const label = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim();
+        if (label.length <= 40 && BUY_CTL.test(label) && b.getClientRects().length) { block = p; break; }
+      }
+    }
+  }
   const nearAnchor = (el) => {
     if (!aRect) return true;
     const r = el.getBoundingClientRect();
-    return r.top < aRect.bottom + REACH && r.bottom > aRect.top - REACH / 2;
+    if (r.bottom <= aRect.top - REACH / 2) return false;
+    return r.top < aRect.bottom + REACH || (!!block && block.contains(el));
   };
   const aboutProduct = (el) => !isChrome(el) && !inRail(el) && el.getClientRects().length > 0 && nearAnchor(el);
+
+  // A class-based selector that finds `el` FIRST among the elements a recipe would accept — the same
+  // filters applyRecipe uses (about this product; for a price, not struck through). cssPath's positional
+  // chain only fits pages laid out exactly like this one: on pixmart.it the sale price's
+  // "div:nth-of-type(2) > div > p > ins > span > bdi" found nothing on a full-price product, where
+  // ".woocommerce-Price-amount bdi" did. Classes that look like state or build hashes are skipped.
+  const goodClass = (c) => c.length <= 40 && !/\d{3,}|^(is|js|has)-|^(sc|css)-|active|selected|hover|focus|hidden|visible|open|loaded|lazy/i.test(c) && !/^[a-z0-9]{8,}$/i.test(c) && !/__[\w-]{5,}$/.test(c);
+  const classesOf = (e) => [...e.classList].filter(goodClass).slice(0, 4).map((c) => '.' + CSS.escape(c));
+  const firstAccepted = (sel, skipStruck) => {
+    try { for (const e of document.querySelectorAll(sel)) if (aboutProduct(e) && !(skipStruck && isStruck(e))) return e; } catch { /* bad selector */ }
+    return null;
+  };
+  const stablePath = (el, skipStruck) => {
+    const tag = el.tagName.toLowerCase(), own = classesOf(el), tries = own.map((c) => tag + c);
+    for (let p = el.parentElement, i = 0; p && p !== document.body && i < 4; p = p.parentElement, i++) {
+      for (const pc of classesOf(p)) { tries.push(`${pc} ${tag}`); for (const c of own) tries.push(`${pc} ${tag}${c}`); }
+    }
+    for (const s of tries.slice(0, 24)) if (firstAccepted(s, skipStruck) === el) return s;
+    return null;
+  };
 
   // Currency-tagged short texts → price candidates (with a class hint, so the model can pick a
   // class-based selector that generalises across the site's products rather than a brittle nth path).
@@ -129,7 +165,8 @@ export function buildSnapshot(selector) {
     if (candEls.length && candEls[candEls.length - 1].contains(el)) { candEls.pop(); priceCandidates.pop(); }
     let fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch { /* noop */ }
     candEls.push(el);
-    priceCandidates.push({ selector: cssPath(el), cls: String(el.className || '').slice(0, 60) || null, text: own, fontSize: fs, struck: isStruck(el) });
+    const struck = isStruck(el);
+    priceCandidates.push({ selector: cssPath(el), stable: struck ? null : stablePath(el, true), cls: String(el.className || '').slice(0, 60) || null, text: own, fontSize: fs, struck });
   }
 
   // Buy / out-of-stock looking controls.
@@ -143,7 +180,7 @@ export function buildSnapshot(selector) {
     if (!label || label.length > 40) continue;
     if (!OOS.test(label) && !BUY.test(label)) continue;
     if (!aboutProduct(b)) continue;
-    buttons.push({ selector: cssPath(b), cls: String(b.className || '').slice(0, 60) || null, text: label, disabled: !!(b.disabled || b.getAttribute('aria-disabled') === 'true') });
+    buttons.push({ selector: cssPath(b), stable: stablePath(b, false), cls: String(b.className || '').slice(0, 60) || null, text: label, disabled: !!(b.disabled || b.getAttribute('aria-disabled') === 'true') });
   }
 
   // The snapshot leaves the page (→ the user's worker → Claude), so strip likely PII first: drop
@@ -239,15 +276,43 @@ export function applyRecipe(recipe) {
   };
   const aRect = anchor ? anchor.getBoundingClientRect() : null;
   const REACH = Math.max(window.innerHeight || 0, 1200);
+  // The product's own block: the smallest ancestor of the title (up to 8 levels, never <body>, at most
+  // a few screens tall) that also holds a rendered buy control. A long option picker can push the price
+  // and the add-to-cart button well over a screen below the title (eu.magbak.com's phone cases: 1,700px
+  // down), and they are still the product's own. Outside that block the distance rule stands.
+  let block = null;
+  if (anchor) {
+    const BUY_CTL = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|do koszyka|kup teraz|ajouter au panier|añadir a la cesta/i;
+    for (let p = anchor.parentElement, i = 0; p && p !== document.body && i < 8 && !block; p = p.parentElement, i++) {
+      if (p.getBoundingClientRect().height > 4 * REACH) break;
+      for (const b of p.querySelectorAll('button, input[type=submit], [role=button]')) {
+        const label = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim();
+        if (label.length <= 40 && BUY_CTL.test(label) && b.getClientRects().length) { block = p; break; }
+      }
+    }
+  }
   const nearAnchor = (el) => {
     if (!aRect) return true;
     const r = el.getBoundingClientRect();
-    return r.top < aRect.bottom + REACH && r.bottom > aRect.top - REACH / 2;
+    if (r.bottom <= aRect.top - REACH / 2) return false;
+    return r.top < aRect.bottom + REACH || (!!block && block.contains(el));
   };
   const shown = (el) => { try { return el.getClientRects().length > 0 && nearAnchor(el); } catch { return false; } };
-  const find = (sel, mustShow) => {
+  // A selling price is never the struck-through one, so a price selector skips those: a class-based
+  // ".price .amount" then reads the sale price on a discounted product and the only price on a
+  // full-price one, where a selector pinned to the sale markup (<ins>) would find nothing.
+  const STRUCK = /\b(old|was|strike|compare|regular|original|listino|previous|vecchio|barrat|precedente)\b/i;
+  const isStruck = (el) => {
+    for (let p = el, i = 0; p && i < 4; p = p.parentElement, i++) {
+      if (p.tagName === 'DEL' || p.tagName === 'S' || p.tagName === 'STRIKE') return true;
+      if (STRUCK.test(String(p.className || ''))) return true;
+      try { if (getComputedStyle(p).textDecorationLine.includes('line-through')) return true; } catch { /* noop */ }
+    }
+    return false;
+  };
+  const find = (sel, mustShow, skipStruck) => {
     try {
-      for (const el of document.querySelectorAll(sel)) if (!inRail(el) && !isChrome(el) && (!mustShow || shown(el))) return el;
+      for (const el of document.querySelectorAll(sel)) if (!inRail(el) && !isChrome(el) && (!mustShow || shown(el)) && !(skipStruck && isStruck(el))) return el;
     } catch { /* bad selector */ }
     return null;
   };
@@ -263,7 +328,7 @@ export function applyRecipe(recipe) {
     const n = Number(s);
     return isFinite(n) ? n : null;
   };
-  const text = (sel, attr) => { const e = find(sel, !attr); return e ? (attr ? e.getAttribute(attr) : e.textContent || '').trim() : null; };
+  const text = (sel, attr, skipStruck) => { const e = find(sel, !attr, skipStruck && !attr); return e ? (attr ? e.getAttribute(attr) : e.textContent || '').trim() : null; };
   // A stock signal is an existence probe, so it must be a control the shopper can actually see.
   const exists = (sel) => !!sel && !!find(sel, true);
   const readGlobal = (path) => {
@@ -276,7 +341,7 @@ export function applyRecipe(recipe) {
 
   // price
   if (recipe.price_global) out.price = pickPrice(readGlobal(recipe.price_global));
-  if (out.price == null && recipe.price_selector) out.price = pickPrice(text(recipe.price_selector, recipe.price_attr));
+  if (out.price == null && recipe.price_selector) out.price = pickPrice(text(recipe.price_selector, recipe.price_attr, true));
 
   // currency
   if (recipe.currency_code) out.currency = String(recipe.currency_code).toUpperCase().slice(0, 3);
@@ -299,6 +364,21 @@ export function applyRecipe(recipe) {
 // ---- service-worker side: local recipe cache (keyed by normalised host) ----
 export function recipeHost(url) {
   try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return null; }
+}
+
+// Which recipe service may be asked about `url`'s store: the user's self-hosted worker for any store;
+// else the free service, only while it is on and only for a store the user allowed. → { url, token } or null.
+export function recipeServiceFor(settings, url, serviceUrl) {
+  if (settings.workerUrl) return { url: settings.workerUrl, token: settings.workerToken || null };
+  const host = recipeHost(url);
+  return settings.recipeService !== false && host && (settings.recipeHosts || []).includes(host) ? { url: serviceUrl, token: null } : null;
+}
+
+// The free service could be offered for this store: it is on, and the user hasn't answered for it yet.
+export function recipeOfferFor(settings, url) {
+  const host = recipeHost(url);
+  return !!host && !settings.workerUrl && settings.recipeService !== false
+    && !(settings.recipeHosts || []).includes(host) && !(settings.recipeDeclined || []).includes(host);
 }
 
 // One storage key per host — never a shared map — so concurrent checks of different watches can't
@@ -355,16 +435,18 @@ export async function putRecipe(url, recipe) {
 // On failure throws an Error carrying .status (HTTP) and, for 429 (daily budget exhausted),
 // .retryAfterSec — background.js uses these to park derivation until the quota resets.
 export async function deriveRecipe({ workerUrl, token, url, snapshot, force, feedback }) {
-  if (!workerUrl || !token) return null;
+  if (!workerUrl) return null;
   const endpoint = workerUrl.replace(/\/+$/, '') + '/recipe';
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 45000); // the worker aborts its Anthropic call at 25s
+  const timer = setTimeout(() => ctrl.abort(), 45000); // the worker gives its model 30s
+  // The address goes without its query string and fragment, where tracking and session ids live.
+  const bare = (u) => { try { const x = new URL(u); return x.origin + x.pathname; } catch { return null; } };
   let res;
   try {
     res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
-      body: JSON.stringify({ host: recipeHost(url), url, snapshot, force: !!force, feedback: feedback || null }),
+      method: 'POST', credentials: 'omit',
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify({ host: recipeHost(url), url: bare(url), snapshot: { ...snapshot, url: bare(snapshot?.url) }, force: !!force, feedback: feedback || null }),
       signal: ctrl.signal
     });
   } finally { clearTimeout(timer); }

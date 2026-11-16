@@ -28,13 +28,6 @@
       </button>
     </div>
   </header>
-  <!-- Just-in-time hint: shown only when watches exist that couldn't be read AND no fallback is set up. -->
-  <div id="tip" class="tip hidden">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-    <span>Some stores couldn't be read on their own. <a href="#" id="tipSettings">Set up the recipe worker →</a></span>
-    <button class="tip-x" id="tipX" title="Dismiss" aria-label="Dismiss">✕</button>
-  </div>
-
   <main id="list"></main>
 
   <footer id="empty" class="empty hidden">
@@ -65,6 +58,8 @@
       <button id="tourGo" class="primary tour-go">Got it</button>
     </div>
   </div>
+
+  <div id="toast" class="toast hidden" role="alert"></div>
 
   <script type="module" src="popup.js"></script>
 </body>

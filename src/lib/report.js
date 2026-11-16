@@ -5,9 +5,10 @@
 //   - error reports for bugs in BuyTracker's own code, only while "Send error reports" is on in
 //     Settings (off by default): reportError(), installErrorReporting()
 // No account, no install id, nothing that links one report to another.
-import { getSettings, availState } from './storage.js';
+import { getSettings, availState, SERVICE_URL } from './storage.js';
+import { browserAsks, granted, PAGE_DATA, ERRORS } from './consent.js';
 
-export const DEV_ENDPOINT = 'https://buytracker-recipes.nervoso.workers.dev';
+const DEV_ENDPOINT = SERVICE_URL;
 const MAX_ERRORS_PER_DAY = 20;
 
 const version = () => chrome.runtime.getManifest().version;
@@ -18,12 +19,14 @@ export function pageAddress(url) {
 }
 
 // Strip what could identify the user or the pages they visit from an error text: the extension id
-// (frames become src/<file>.js:line:col), web addresses, emails, and double-quoted values (V8 quotes
+// (frames become src/<file>.js:line:col; Firefox's moz-extension id is random per install, so it would
+// identify the user outright), web addresses, emails, and double-quoted values (V8 quotes
 // the text it failed on, e.g. JSON.parse echoes the start of a page). Single-quoted property names
 // ("reading 'price'") are kept: they are what make an error fixable.
 export function scrub(text, max) {
   return String(text ?? '')
     .replace(/chrome-extension:\/\/[a-p]{32}\//g, '')
+    .replace(/moz-extension:\/\/[0-9a-f-]{36}\//gi, '')
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"<>)]+/gi, '<url>')
     .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '<email>')
     .replace(/"[^"\n]*"/g, '"…"')
@@ -41,6 +44,7 @@ async function post(path, body) {
 // per-site recipe in use, the user's correction, and — when their own worker re-derived — what the
 // re-check read and whether that matches the correction (`outcome`).
 export async function sendFeedback({ watch, recipe, feedback, outcome, after }) {
+  if (!(await granted(PAGE_DATA))) throw new Error('Firefox hasn’t allowed BuyTracker to send page data, so the report wasn’t sent.');
   const res = await post('/feedback', {
     version: version(), url: pageAddress(watch.url), watch_type: watch.watchType || 'both',
     read: {
@@ -62,12 +66,16 @@ const BUG_NAMES = new Set(['TypeError', 'ReferenceError', 'RangeError', 'SyntaxE
 const NETWORK = /failed to fetch|networkerror|network error|load failed|aborted|timed? ?out/i;
 export const isBug = (e) => !!e && BUG_NAMES.has(e.name) && !NETWORK.test(e.message || '');
 
+// On. In Firefox that is its own data-collection permission for error reports (which the user can
+// also grant while installing); elsewhere the Settings switch.
+const errorReportsOn = async () => (browserAsks() ? granted(ERRORS) : !!(await getSettings()).sendErrorReports);
+
 // Sends one error when the user has error reports on. Each distinct error goes at most once a day,
 // and at most MAX_ERRORS_PER_DAY in all, so a bug hit on every check sends one report, not hundreds.
 // Never throws: reporting must not become a second failure.
 export async function reportError(err, context) {
   try {
-    if (!err || !(await getSettings()).sendErrorReports) return;
+    if (!err || !(await errorReportsOn())) return;
     const name = scrub(err.name || 'Error', 60);
     const message = scrub(err.message ?? err, 500);
     const stack = scrub(err.stack || '', 2000);

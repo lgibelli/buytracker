@@ -151,10 +151,26 @@ export function capturePage(selector) {
   // both sides, so a page the user had scrolled when adding the watch measures the same.
   const aRect = anchor ? anchor.getBoundingClientRect() : null;
   const REACH = Math.max(window.innerHeight || 0, 1200);
+  // The product's own block: the smallest ancestor of the title (up to 8 levels, never <body>, at most
+  // a few screens tall) that also holds a rendered buy control. A long option picker can push the price
+  // and the add-to-cart button well over a screen below the title (eu.magbak.com's phone cases: 1,700px
+  // down), and they are still the product's own. Outside that block the distance rule stands.
+  let block = null;
+  if (anchor) {
+    const BUY_CTL = /add to (cart|bag|basket)|buy now|aggiungi al carrello|in den warenkorb|do koszyka|kup teraz|ajouter au panier|añadir a la cesta/i;
+    for (let p = anchor.parentElement, i = 0; p && p !== document.body && i < 8 && !block; p = p.parentElement, i++) {
+      if (p.getBoundingClientRect().height > 4 * REACH) break;
+      for (const b of p.querySelectorAll('button, input[type=submit], [role=button]')) {
+        const label = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim();
+        if (label.length <= 40 && BUY_CTL.test(label) && b.getClientRects().length) { block = p; break; }
+      }
+    }
+  }
   const nearAnchor = (el) => {
     if (!aRect) return true;
     const r = el.getBoundingClientRect();
-    return r.top < aRect.bottom + REACH && r.bottom > aRect.top - REACH / 2;
+    if (r.bottom <= aRect.top - REACH / 2) return false;
+    return r.top < aRect.bottom + REACH || (!!block && block.contains(el));
   };
   // Everything a price or a buy button must pass to speak for this product. Cheap tests first; the rect
   // tests force layout. getClientRects (not offsetParent) so a position:fixed sticky buy bar counts.
