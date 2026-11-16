@@ -56,6 +56,9 @@ main { padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
 .badge.no_data { color: #f0c674; border-color: #4d3a10; }
 .detail { margin-top: 10px; }
 .chart { margin-top: 8px; }
+/* Drawn at the card's inner width (380 − list padding − border − card padding = 338) and scaled to
+   fit, so it stays inside the card when a classic scrollbar narrows the popup. */
+.chart svg { display: block; width: 100%; height: auto; }
 .row { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .row label { color: #8b97a4; font-size: 11px; }
 input, select { background: #0b0d10; color: #e6edf3; border: 1px solid #2a3340; border-radius: 5px; padding: 3px 6px; font-size: 12px; }

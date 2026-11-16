@@ -89,7 +89,7 @@ function card(w, tp) {
         <button class="iconbtn" data-act="check" title="Check now" aria-label="Check now">↻</button>
         <button class="iconbtn" data-act="pause" title="${w.paused ? 'Resume' : 'Pause'}" aria-label="${w.paused ? 'Resume' : 'Pause'}">${w.paused ? '▶' : '⏸'}</button>
       </div>
-      <div class="chart">${priceChartSVG(w.history, { currency: cur, width: 358, height: 110 })}</div>
+      <div class="chart">${priceChartSVG(w.history, { currency: cur, width: 338, height: 110 })}</div>
       ${w.lastSummary ? `<div class="summary">“${esc(w.lastSummary)}”</div>` : ''}
       ${w.selector ? '' : `<div class="report">
         <button class="report-open" data-act="report-open" type="button">Wrong result? Report &amp; fix</button>
