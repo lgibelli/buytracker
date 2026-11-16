@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<!-- BuyTracker promo video, 1920×1080, 30 s. scripts/render-video.js renders it frame by frame to
+     ../promo-video-30s.mp4 by calling window.seek(t): every visual here is a pure function of t, so the
+     render is deterministic. The popup is drawn with the extension's real popup.css and chart.js, so the
+     page must be served over http (the script does that); add ?t=12.5 to inspect one moment.
+     The store and products are fictional. -->
+<html><head><meta charset="utf-8"><title>BuyTracker promo video</title>
+<style>
+  html, body { margin: 0; }
+  body { width: 1920px; height: 1080px; overflow: hidden; position: relative;
+    background: linear-gradient(135deg, #3d8bff, #1656cc); color: #fff;
+    font-family: "Avenir Next", sans-serif; -webkit-font-smoothing: antialiased; }
+  .abs { position: absolute; }
+  svg.stage { position: absolute; inset: 0; overflow: visible; }
+
+  /* Brand type: the wordmark and sentence styles of the promo tiles. */
+  .name { font-weight: 600; letter-spacing: -.025em; line-height: 1; }
+  .sentence { font-weight: 500; color: #dce8ff; line-height: 1.3; text-wrap: balance; }
+
+  /* Captions for the product beats, left-aligned like the marquee tile. */
+  .cap { position: absolute; left: 120px; top: 540px; width: 600px; opacity: 0; }
+  .cap h2 { margin: 0; font-weight: 600; font-size: 72px; line-height: 1.08; letter-spacing: -.02em; text-wrap: balance; }
+  .cap p { margin: 24px 0 0; font-weight: 500; font-size: 34px; line-height: 1.35; color: #dce8ff; text-wrap: balance; }
+
+  /* A browser window on a fictional store. */
+  .win { left: 760px; top: 150px; width: 1040px; height: 780px; border-radius: 14px; overflow: hidden;
+    background: #f6f7f9; box-shadow: 0 40px 90px rgba(4, 24, 70, .45); opacity: 0;
+    font-family: -apple-system, system-ui, sans-serif; color: #141a21; transform-origin: 50% 50%; }
+  .tabs { height: 44px; background: #1b1f24; display: flex; align-items: flex-end; gap: 18px; padding: 0 16px; }
+  .dots { display: flex; gap: 8px; align-self: center; }
+  .dots i { width: 12px; height: 12px; border-radius: 50%; background: #3a4048; }
+  .tab { background: #2a2f36; color: #e6edf3; font-size: 14px; padding: 10px 20px; border-radius: 10px 10px 0 0; }
+  .bar { height: 48px; background: #2a2f36; display: flex; align-items: center; gap: 16px; padding: 0 16px; }
+  .url { flex: 1; background: #1b1f24; color: #c9d1d9; border-radius: 16px; padding: 8px 16px; font-size: 15px; }
+  .ext { width: 22px; height: 22px; display: block; }
+  .page { display: flex; gap: 48px; padding: 52px 56px; }
+  .shot { width: 400px; height: 400px; flex: none; background: #e7ebf0; border-radius: 16px; display: grid; place-items: center; }
+  .info { flex: 1; padding-top: 8px; }
+  .store { font-size: 15px; font-weight: 600; color: #5b6875; }
+  .info h1 { margin: 10px 0 0; font-size: 36px; line-height: 1.15; font-weight: 700; }
+  .pp { margin-top: 22px; font-size: 40px; font-weight: 700; }
+  .stock { margin-top: 8px; font-size: 16px; font-weight: 600; color: #1a7f4b; }
+  .cart { margin-top: 26px; width: 320px; padding: 16px 0; border-radius: 12px; background: #141a21; color: #fff;
+    text-align: center; font-size: 17px; font-weight: 600; }
+  .ln { height: 12px; margin-top: 14px; border-radius: 6px; background: #e1e6ec; }
+
+  /* Pointer and click ripple. */
+  #cur { width: 34px; height: 34px; opacity: 0; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .35)); }
+  .ripple { width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; border: 3px solid #fff; opacity: 0; }
+
+  /* Desktop notifications (the texts are the extension's own). */
+  .note { left: 1090px; width: 640px; display: flex; gap: 18px; align-items: flex-start; padding: 20px 24px;
+    background: rgba(22, 27, 34, .97); border: 1px solid rgba(255, 255, 255, .08); border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(4, 24, 70, .4); font-family: -apple-system, system-ui, sans-serif; opacity: 0; }
+  .note img { width: 52px; height: 52px; flex: none; }
+  .note .app { font-size: 15px; color: #8b97a4; }
+  .note .nt { margin-top: 2px; font-size: 22px; font-weight: 700; color: #fff; }
+  .note .nm { margin-top: 4px; font-size: 19px; line-height: 1.35; color: #c9d1d9; }
+</style></head><body>
+
+<!-- Opening: the logo's step line at stage scale. -->
+<svg class="stage" id="intro" viewBox="0 0 1920 1080" width="1920" height="1080" aria-hidden="true">
+  <path id="introLine" d="M-40 300 H640 V800 H1380" fill="none" stroke="#fff" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle id="introDot" cx="1380" cy="800" r="48" fill="#fff"/>
+</svg>
+<div class="abs" id="introName" style="left:720px; top:400px"><div class="name" style="font-size:150px">BuyTracker</div></div>
+<div class="abs sentence" id="introLine2" style="left:724px; top:580px; font-size:44px; width:760px">Free price-drop and restock alerts for any store.</div>
+
+<!-- Product beats -->
+<div class="cap" id="cap1"><h2>Open any product page.</h2><p>Click BuyTracker, then Watch this page.</p></div>
+<div class="cap" id="cap2"><h2>It keeps checking for you.</h2><p>Every price change goes on the chart.</p></div>
+<div class="cap" id="cap3"><h2>Get alerted the moment it drops.</h2><p>Price drops, your target price, back in stock.</p></div>
+
+<div class="abs win" id="win">
+  <div class="tabs"><span class="dots"><i></i><i></i><i></i></span><span class="tab">Aurora Wireless Headphones</span></div>
+  <div class="bar"><span class="url">store.example/aurora-headphones</span><img class="ext" id="ext" src="../../icons/logo.svg" alt=""></div>
+  <div class="page">
+    <div class="shot">
+      <svg viewBox="0 0 200 200" width="250" height="250" aria-hidden="true">
+        <path d="M46 118 V100 a54 54 0 0 1 108 0 V118" fill="none" stroke="#1d2633" stroke-width="12" stroke-linecap="round"/>
+        <rect x="30" y="108" width="38" height="60" rx="15" fill="#1d2633"/>
+        <rect x="132" y="108" width="38" height="60" rx="15" fill="#1d2633"/>
+      </svg>
+    </div>
+    <div class="info">
+      <div class="store">Larkfield Audio</div>
+      <h1>Aurora Wireless Headphones</h1>
+      <div class="pp">€329.00</div>
+      <div class="stock">In stock</div>
+      <div class="cart">Add to cart</div>
+      <div class="ln" style="margin-top:34px; width:92%"></div>
+      <div class="ln" style="width:84%"></div>
+      <div class="ln" style="width:61%"></div>
+    </div>
+  </div>
+</div>
+
+<div class="abs" id="pop" style="left:0; top:0; transform-origin:0 0; opacity:0"></div>
+
+<div class="abs note" id="n1"><img src="../../icons/logo.svg" alt=""><div><div class="app">BuyTracker</div><div class="nt">⬇️ Price dropped</div><div class="nm">Aurora Wireless Headphones is now 249 EUR.</div></div></div>
+<div class="abs note" id="n2"><img src="../../icons/logo.svg" alt=""><div><div class="app">BuyTracker</div><div class="nt">🎯 Target price hit</div><div class="nm">Aurora Wireless Headphones is 249 EUR (≤ 250).</div></div></div>
+<div class="abs note" id="n3"><img src="../../icons/logo.svg" alt=""><div><div class="app">BuyTracker</div><div class="nt">📦 Back in stock</div><div class="nm">Espresso Grinder is available again.</div></div></div>
+
+<!-- Closing: free, then the lockup. -->
+<div class="abs name" id="free" style="left:112px; top:150px; font-size:240px; opacity:0">Free.</div>
+<div class="abs" id="free2" style="left:124px; top:428px; font-weight:600; font-size:60px; letter-spacing:-.015em; opacity:0">No account. No tracking. No ads.</div>
+<div class="abs sentence" id="free3" style="left:124px; top:516px; font-size:40px; opacity:0">Your watches stay in your browser.</div>
+<svg class="stage" id="outro" viewBox="0 0 1920 1080" width="1920" height="1080" aria-hidden="true">
+  <path id="outroLine" d="M-40 690 H860 V880 H1280" fill="none" stroke="#fff" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle id="outroDot" cx="1280" cy="880" r="40" fill="#fff"/>
+</svg>
+<div class="abs" id="outroName" style="left:1350px; top:818px; opacity:0"><div class="name" style="font-size:76px">BuyTracker</div></div>
+<div class="abs sentence" id="outroStore" style="left:1353px; top:906px; font-size:30px; opacity:0">Free on the Chrome Web Store</div>
+
+<div class="abs ripple" id="rip"></div>
+<svg class="abs" id="cur" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2 L4 19 L8.5 14.8 L11.4 21.4 L14.2 20.2 L11.3 13.7 L17.5 13.7 Z" fill="#fff" stroke="#111" stroke-width="1.3" stroke-linejoin="round"/></svg>
+
+<script type="module">
+import { priceChartSVG } from '../../src/lib/chart.js';
+
+// ---- timing helpers --------------------------------------------------------------------------------
+// progress through [a,b]; a = b = Infinity ("never") stays 0 instead of NaN
+const p = (t, a, b) => (t <= a ? 0 : t >= b ? 1 : (t - a) / (b - a));
+const eOut = (x) => 1 - Math.pow(1 - x, 3);
+const eInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+const eBack = (x) => { const c = 1.7; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const lerp = (a, b, x) => a + (b - a) * x;
+const $ = (id) => document.getElementById(id);
+
+// Enter over [a,b] (fade + rise), leave over [c,d] (fade + lift). Returns the visible fraction.
+function show(el, t, a, b, c = Infinity, d = Infinity, rise = 26, extra = '') {
+  const i = eOut(p(t, a, b)), o = eInOut(p(t, c, d));
+  el.style.opacity = i * (1 - o);
+  el.style.transform = `translateY(${(1 - i) * rise - o * 18}px) ${extra}`;
+  return i * (1 - o);
+}
+const caption = (el, t, a, b, c, d) => show(el, t, a, b, c, d, 26, 'translateY(-50%)');
+
+function drawLine(path, t, a, b) {
+  const len = path.getTotalLength();
+  path.style.strokeDasharray = `${len} ${len}`;
+  path.style.strokeDashoffset = len * (1 - eInOut(p(t, a, b)));
+}
+function popDot(dot, t, a, b, c = Infinity, d = Infinity) {
+  const s = eBack(p(t, a, b)) * (1 - eInOut(p(t, c, d)));
+  const cx = dot.getAttribute('cx'), cy = dot.getAttribute('cy');
+  dot.setAttribute('transform', `translate(${cx} ${cy}) scale(${Math.max(0, s)}) translate(${-cx} ${-cy})`);
+}
+
+// ---- the popup (real popup.css inside a shadow root, so its body rules can't touch this page) -----
+const shadow = $('pop').attachShadow({ mode: 'open' });
+shadow.innerHTML = `<link rel="stylesheet" href="../../src/popup.css">
+<style>
+  .pbody { width: 380px; background: #0b0d10; color: #e6edf3; font: 13px/1.4 -apple-system, system-ui, sans-serif;
+    border: 1px solid #2a3340; border-radius: 10px; overflow: hidden; box-shadow: 0 30px 70px rgba(4, 24, 70, .5); }
+</style>
+<div class="pbody">
+  <header>
+    <div class="topbar">
+      <div class="brand"><img src="../../icons/logo.svg" alt="">BuyTracker</div>
+      <div class="tools">
+        <button class="hicon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
+        <button class="hicon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="add" class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Watch this page</button>
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/></svg>Area</button>
+    </div>
+  </header>
+  <main id="list"></main>
+</div>`;
+const list = shadow.getElementById('list');
+const addBtn = shadow.getElementById('add');
+const pbody = shadow.querySelector('.pbody');
+
+// Aurora's price history: a step series, as BuyTracker stores it (a point only when the price changes).
+const DAY = 864e5;
+const T0 = Date.UTC(2026, 10, 10, 9);
+const HISTORY = [{ t: T0, price: 329 }, { t: T0 + 1.5 * DAY, price: 279 }, { t: T0 + 3.2 * DAY, price: 289 }, { t: T0 + 5 * DAY, price: 249 }];
+const realNow = Date.now.bind(Date);
+let simNow = T0;
+
+const fmt = (n) => (Number.isInteger(n) ? n : n.toFixed(2));
+function deltaHtml(h) { // as popup.js renders it
+  if (h.length < 2) return '<span class="delta muted">new</span>';
+  const last = h[h.length - 1].price, prev = h[h.length - 2].price, d = last - prev;
+  return `<span class="delta ${d < 0 ? 'down' : 'up'}">${d < 0 ? '▼' : '▲'} ${fmt(Math.abs(d))} (${Math.abs((d / prev) * 100).toFixed(0)}%)</span>`;
+}
+// Card markup mirrors popup.js card(); `detail` is the expanded part (or '').
+function card({ title, ago, price, oos, delta, detail = '' }) {
+  return `<div class="card${detail ? '' : ' collapsed'}">
+    <div class="head">
+      <button class="chev">▾</button>
+      <div class="head-main">
+        <div class="title"><a><span class="t-head">${title}</span></a></div>
+        <div class="sub">checked ${ago}</div>
+      </div>
+      <div class="price"><div class="now${oos ? ' oos' : ''}">${price} <span class="muted" style="font-size:11px">EUR</span></div>${oos ? '<div class="oos-tag">out of stock</div>' : delta}</div>
+      <button class="iconbtn danger del">🗑</button>
+    </div>${detail}
+  </div>`;
+}
+const HOODIE = card({ title: 'Merino Wool Hoodie', ago: '2h ago', price: 89, delta: '<span class="delta down">▼ 11 (11%)</span>' });
+const GRINDER = card({ title: 'Espresso Grinder', ago: '40m ago', price: 189, oos: true });
+
+function auroraCard(expand) {
+  Date.now = () => simNow; // chart.js extends the line to "now": drive it with simulated time
+  const h = HISTORY.filter((x) => x.t <= simNow);
+  // 338 = the card's inner width (popup.js passes 358, which overflows the card by 20px)
+  const chart = priceChartSVG(h, { currency: 'EUR', width: 338, height: 110 });
+  Date.now = realNow;
+  const detail = expand > 0 ? `<div class="clip" style="overflow:hidden"><div class="detail">
+      <div class="meta">
+        <span class="badge ok">ok</span><span class="badge ok">in stock</span>
+        <span>checks every</span><select><option>6h</option></select>
+        <label>≤ <input class="target" type="number" value="250"></label>
+        <span style="margin-left:auto"></span>
+        <button class="iconbtn">↻</button><button class="iconbtn">⏸</button>
+      </div>
+      <div class="chart">${chart}</div>
+    </div></div>` : '';
+  return card({ title: 'Aurora Wireless Headphones', ago: 'just now', price: h[h.length - 1].price, delta: deltaHtml(h), detail });
+}
+
+// ---- the timeline ----------------------------------------------------------------------------------
+const S2 = 1.3, S3 = 1.75; // popup scale while on the page / zoomed in
+function popupBase() { // S2 placement: under the toolbar icon, right-aligned to the window
+  return { x: 1800 - 10 - 380 * S2, y: 150 + 92 + 6 };
+}
+function centerOf(el) { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+
+function seek(t) {
+  // 0–4.3 s: opening
+  drawLine($('introLine'), t, 0.25, 1.35);
+  popDot($('introDot'), t, 1.25, 1.65);
+  const introOut = 1 - eInOut(p(t, 3.8, 4.3));
+  $('intro').style.opacity = introOut;
+  show($('introName'), t, 1.55, 2.15, 3.8, 4.3);
+  show($('introLine2'), t, 1.9, 2.5, 3.8, 4.3);
+
+  // 4.1–11 s: watch a page
+  caption($('cap1'), t, 4.4, 5.0, 10.6, 11.0);
+  const winIn = eOut(p(t, 4.1, 4.8)), winOut = eInOut(p(t, 10.9, 11.8));
+  $('win').style.opacity = winIn * (1 - winOut);
+  $('win').style.transform = `translateY(${(1 - winIn) * 40}px) scale(${lerp(0.97, 1, winIn) * lerp(1, 0.96, winOut)})`;
+
+  // popup list: two existing watches; Aurora joins on the click at 7.7 s
+  const added = p(t, 7.85, 8.3);
+  const expand = eInOut(p(t, 11.9, 12.5));
+  simNow = T0 + lerp(0.25, 6, eInOut(p(t, 12.5, 17.2))) * DAY;
+  list.innerHTML = (added > 0 ? `<div class="new">${auroraCard(expand)}</div>` : '') + HOODIE + GRINDER;
+  const nw = shadow.querySelector('.new');
+  if (nw) { // the new card grows in, cancelling the list gap while it does
+    const a = eOut(added), full = nw.firstElementChild.offsetHeight;
+    nw.style.cssText = `height:${full * a}px; opacity:${a}; margin-bottom:${-10 * (1 - a)}px; overflow:hidden`;
+    const clip = shadow.querySelector('.clip');
+    if (clip) { const h = clip.scrollHeight; clip.style.height = `${h * expand}px`; nw.style.height = 'auto'; }
+  }
+  // open on the toolbar click (6.25 s), zoom in for the history (10.9 s), leave at 18.3 s
+  const open = eOut(p(t, 6.25, 6.6)), zoom = eInOut(p(t, 10.9, 11.9)), leave = eInOut(p(t, 18.3, 18.8));
+  const base = popupBase();
+  const h3 = pbody.offsetHeight * S3;
+  const x = lerp(base.x, 1080, zoom), y = lerp(base.y, (1080 - h3) / 2, zoom);
+  const s = lerp(S2, S3, zoom) * lerp(0.96, 1, open) * lerp(1, 0.96, leave);
+  $('pop').style.opacity = open * (1 - leave);
+  $('pop').style.transform = `translate(${x}px, ${y - (1 - open) * 8}px) scale(${s})`;
+  addBtn.style.filter = t >= 7.7 && t < 7.88 ? 'brightness(.82)' : '';
+
+  // pointer: in at 4.9 s → toolbar icon (click 6.15) → Watch this page (click 7.7) → out by 10.7 s
+  const start = { x: 1260, y: 840 };
+  const icon = centerOf($('ext'));
+  const btn = t >= 6.6 ? centerOf(addBtn) : icon;
+  let c = start;
+  if (t >= 5.3) c = { x: lerp(start.x, icon.x, eInOut(p(t, 5.3, 6.1))), y: lerp(start.y, icon.y, eInOut(p(t, 5.3, 6.1))) };
+  if (t >= 6.9) c = { x: lerp(icon.x, btn.x, eInOut(p(t, 6.9, 7.6))), y: lerp(icon.y, btn.y, eInOut(p(t, 6.9, 7.6))) };
+  const press = (t >= 6.12 && t < 6.26) || (t >= 7.68 && t < 7.82) ? 0.86 : 1;
+  $('cur').style.opacity = eOut(p(t, 4.9, 5.2)) * (1 - p(t, 10.3, 10.7));
+  $('cur').style.transform = `translate(${c.x - 5.7}px, ${c.y - 2.8}px) scale(${press})`;
+  const clickAt = t < 7 ? 6.15 : 7.7, k = p(t, clickAt, clickAt + 0.4), at = clickAt === 6.15 ? icon : btn;
+  $('rip').style.opacity = k > 0 && k < 1 ? 0.9 * (1 - k) : 0;
+  $('rip').style.transform = `translate(${at.x}px, ${at.y}px) scale(${lerp(0.3, 1.2, eOut(k))})`;
+
+  // 11–18.6 s: history
+  caption($('cap2'), t, 11.4, 12.0, 18.2, 18.6);
+
+  // 18.7–24.2 s: alerts
+  caption($('cap3'), t, 18.7, 19.3, 23.7, 24.1);
+  ['n1', 'n2', 'n3'].forEach((id, i) => {
+    const el = $(id), a = eOut(p(t, 19.1 + i * 0.7, 19.6 + i * 0.7)), o = eInOut(p(t, 23.7, 24.2));
+    el.style.top = `${336 + i * 144}px`;
+    el.style.opacity = a * (1 - o);
+    el.style.transform = `translateX(${(1 - a) * 70}px) translateY(${-o * 18}px)`;
+  });
+
+  // 24.3–30 s: free, then the lockup
+  show($('free'), t, 24.3, 24.9, Infinity, Infinity, 40, `scale(${lerp(0.96, 1, eOut(p(t, 24.3, 24.9)))})`);
+  show($('free2'), t, 24.9, 25.4);
+  show($('free3'), t, 25.5, 26.0);
+  $('outro').style.opacity = t >= 26.2 ? 1 : 0;
+  drawLine($('outroLine'), t, 26.2, 27.1);
+  popDot($('outroDot'), t, 27.0, 27.4);
+  show($('outroName'), t, 27.3, 27.8);
+  show($('outroStore'), t, 27.6, 28.1);
+}
+window.seek = seek;
+$('free').style.transformOrigin = 'left center';
+
+// Ready once the popup stylesheet, the fonts and every image are in.
+const link = shadow.querySelector('link');
+window.ready = Promise.all([
+  new Promise((r) => (link.sheet ? r() : link.addEventListener('load', r, { once: true }))),
+  document.fonts.ready,
+  ...[...document.images, ...shadow.querySelectorAll('img')].map((img) => img.decode().catch(() => {})),
+]).then(() => { seek(Number(new URLSearchParams(location.search).get('t') || 0)); return true; });
+</script>
+</body></html>

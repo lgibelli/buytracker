@@ -4,10 +4,17 @@
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json
 
-# Build artifact (Chrome Web Store package)
+# Build artifacts (Chrome Web Store and Firefox Add-ons packages)
 buytracker.zip
+buytracker-firefox.zip
+dist/
 
 # Cloudflare Worker local secrets + deps
 worker/.dev.vars
 worker/node_modules/
 worker/.wrangler/
+
+# Promo video intermediate (scripts/render-video.js → voiceover.js)
+store-assets/promo/video-silent.mp4
+# Licensed music bed: the license covers the finished video, not sharing the track
+store-assets/promo/music.*

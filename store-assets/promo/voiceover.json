@@ -1,0 +1,13 @@
+{
+  "voice_id": "EXAVITQu4vr4xnSDxMaL",
+  "model_id": "eleven_multilingual_v2",
+  "voice_settings": { "stability": 0.5, "similarity_boost": 0.75, "style": 0.15, "speed": 1.0 },
+  "music": { "file": "music.wav", "start": 8, "level_lufs": -26, "fade_in": 0.8, "fade_out": 2.5 },
+  "lines": [
+    { "at": 1.0, "until": 4.3, "text": "BuyTracker. Free price alerts for any store." },
+    { "at": 4.6, "until": 10.8, "text": "Open any product page, click BuyTracker, then Watch this page." },
+    { "at": 11.6, "until": 18.3, "text": "It keeps checking for you, and every price change goes on the chart." },
+    { "at": 18.9, "until": 23.9, "text": "When the price drops, hits your target, or it's back in stock, you'll know." },
+    { "at": 24.4, "until": 29.8, "text": "And it's free. No account, no tracking, no ads. Just free." }
+  ]
+}
