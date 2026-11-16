@@ -9,7 +9,9 @@ const DEFAULT_SETTINGS = {
   // Optional recipe-derivation worker (see worker/). When both are set, sites the generic extractors
   // can't parse get a per-site recipe derived once and cached, instead of an LLM call every check.
   workerUrl: '',
-  workerToken: ''
+  workerToken: '',
+  // Send reports of bugs in BuyTracker's own code to the developer (src/lib/report.js). Opt-in.
+  sendErrorReports: false
 };
 
 export async function getSettings() {

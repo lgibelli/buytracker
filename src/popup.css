@@ -120,7 +120,11 @@ footer { color: #7a8794; }
 .report-price, .report-note { width: 100%; background: #0b0d10; color: #e6edf3; border: 1px solid #2a3340;
   border-radius: 7px; padding: 7px 9px; font: inherit; font-size: 12px; }
 .report-price::placeholder, .report-note::placeholder { color: #6b7785; }
+.report-send { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: #c9d3dc; cursor: pointer; }
+.report-send input { margin: 0; accent-color: #1f6feb; }
+.report-fine { margin: -2px 0 0; font-size: 10.5px; line-height: 1.45; color: #7a8794; }
 .report-row { display: flex; align-items: center; gap: 9px; }
+.report-submit { flex: none; white-space: nowrap; }
 .report-status { font-size: 11.5px; color: #9aa7b4; }
 .report-status.ok { color: #7fd9b8; }
 .report-status.warn { color: #f0c674; }

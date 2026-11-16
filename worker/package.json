@@ -5,7 +5,9 @@
   "description": "Cloudflare Worker that derives reusable per-site product-parse recipes with Claude",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "feedback": "wrangler d1 execute buytracker-reports --remote --command \"SELECT datetime(ts/1000, 'unixepoch') AS at, version, url, read_price, read_availability, correct_price, correct_availability, note, outcome FROM feedback ORDER BY ts DESC LIMIT 50\"",
+    "errors": "wrangler d1 execute buytracker-reports --remote --command \"SELECT datetime(ts/1000, 'unixepoch') AS at, version, context, name, message, browser FROM errors ORDER BY ts DESC LIMIT 50\""
   },
   "devDependencies": {
     "wrangler": "^4"

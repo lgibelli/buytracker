@@ -116,6 +116,107 @@ async function logReport(env, r) {
   } catch (e) { console.warn('report log failed', e); }
 }
 
+// --- Public intake: reports users of the published extension choose to send (POST /feedback, /errors) ---
+// No token: the extension is public, so any token it shipped would be too. Instead every field is
+// whitelisted and capped, and intake is rate-limited per client and per day in total, which keeps a
+// flood well inside D1's free allowance (and storage bounded) whatever the plan. Rows are pruned
+// after a while (privacy.html states the same periods).
+const INTAKE_MAX_BYTES = 16_384;
+const INTAKE = {
+  feedback: { perClient: 20, perDay: 1000, keepMs: 365 * DAY_MS },
+  errors: { perClient: 50, perDay: 5000, keepMs: 90 * DAY_MS }
+};
+
+const istr = (v, n) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
+const inum = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const ione = (v, allowed) => (allowed.includes(v) ? v : null);
+// Defence in depth: the extension already strips these before sending.
+const iscrub = (v, n) => istr(v, n)?.replace(/\b(?:https?|wss?):\/\/[^\s'")]+/g, '<url>').replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '<email>') ?? null;
+const RECIPE_KEYS = ['price_selector', 'price_attr', 'price_global', 'currency_code', 'currency_selector', 'in_stock_selector', 'out_of_stock_selector', 'out_of_stock_text'];
+
+function cleanFeedback(p) {
+  let u;
+  try { u = new URL(p.url); } catch { return null; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  const host = normalizeHost(u.hostname);
+  if (!host) return null;
+  const read = p.read && typeof p.read === 'object' ? p.read : {};
+  const fix = p.correction && typeof p.correction === 'object' ? p.correction : {};
+  const after = p.after && typeof p.after === 'object' ? p.after : {};
+  let recipe = null;
+  if (p.recipe && typeof p.recipe === 'object') {
+    const r = Object.fromEntries(RECIPE_KEYS.map((k) => [k, istr(p.recipe[k], 300)]).filter(([, v]) => v));
+    if (Object.keys(r).length) recipe = JSON.stringify(r);
+  }
+  const row = {
+    version: istr(p.version, 20), host, url: (u.origin + u.pathname).slice(0, 500),
+    watch_type: ione(p.watch_type, ['both', 'price', 'availability']),
+    read_price: inum(read.price), read_currency: istr(read.currency, 8), read_availability: ione(read.availability, ['in', 'out']),
+    read_status: ione(read.status, ['ok', 'no_data', 'blocked', 'error']), read_error: iscrub(read.error, 300),
+    fetch_mode: ione(read.fetch_mode, ['tab', 'fetch']), recipe,
+    correct_availability: ione(fix.availability, ['in', 'out']), correct_price: inum(fix.price), note: istr(fix.note, 300),
+    outcome: ione(p.outcome, ['fixed', 'still_wrong', 'rederived', 'error', 'not_attempted']),
+    after_price: inum(after.price), after_availability: ione(after.availability, ['in', 'out'])
+  };
+  // A report says what is wrong; one that says nothing is not worth a row.
+  return row.correct_availability || row.correct_price != null || row.note ? row : null;
+}
+
+function browserOf(ua) {
+  const chrome = /Chrome\/(\d+)/.exec(ua || '');
+  const os = /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : 'other';
+  return chrome ? `Chrome ${chrome[1]} / ${os}` : os;
+}
+
+function cleanError(p, ua) {
+  const message = iscrub(p.message, 500);
+  if (!message) return null;
+  return {
+    version: istr(p.version, 20), context: ione(p.context, ['background', 'popup', 'options', 'welcome']),
+    name: istr(p.name, 60), message, stack: iscrub(p.stack, 2000), browser: browserOf(ua)
+  };
+}
+
+async function clientKey(env, day, ip) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.AUTH_TOKEN || 'buytracker'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(day + '|' + ip)));
+  return [...mac.slice(0, 12)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Counts this request against the client's and the day's allowance; false = over the limit. The
+// day's total only counts admitted requests, so one noisy client can't use up everyone's allowance.
+async function admit(env, kind, ip) {
+  const day = new Date().toISOString().slice(0, 10);
+  const bump = env.REPORTS.prepare('INSERT INTO intake_counts (day, key, n) VALUES (?, ?, 1) ON CONFLICT (day, key) DO UPDATE SET n = n + 1 RETURNING n');
+  const [mine] = await env.REPORTS.batch([
+    bump.bind(day, `${kind}:${await clientKey(env, day, ip)}`),
+    env.REPORTS.prepare('DELETE FROM intake_counts WHERE day < ?').bind(day)
+  ]);
+  if (mine.results[0].n > INTAKE[kind].perClient) return false;
+  const all = await bump.bind(day, `${kind}:*`).first();
+  return all.n <= INTAKE[kind].perDay;
+}
+
+async function intake(req, env, kind, origin) {
+  if (!env.REPORTS) return json({ error: 'reports DB not configured' }, 501, origin);
+  if (Number(req.headers.get('content-length') || 0) > INTAKE_MAX_BYTES) return json({ error: 'body too large' }, 413, origin);
+  const text = await req.text();
+  if (text.length > INTAKE_MAX_BYTES) return json({ error: 'body too large' }, 413, origin);
+  let p;
+  try { p = JSON.parse(text); } catch { return json({ error: 'bad json' }, 400, origin); }
+  const row = p && typeof p === 'object' && (kind === 'feedback' ? cleanFeedback(p) : cleanError(p, req.headers.get('user-agent')));
+  if (!row) return json({ error: 'nothing to record' }, 400, origin);
+  if (!await admit(env, kind, req.headers.get('cf-connecting-ip') || 'unknown')) {
+    return json({ error: 'too many reports today' }, 429, origin, { 'retry-after': String(secsToUtcMidnight()) });
+  }
+  const cols = Object.keys(row);
+  await env.REPORTS.batch([
+    env.REPORTS.prepare(`INSERT INTO ${kind} (ts, ${cols.join(', ')}) VALUES (?${', ?'.repeat(cols.length)})`).bind(Date.now(), ...cols.map((c) => row[c])),
+    env.REPORTS.prepare(`DELETE FROM ${kind} WHERE ts < ?`).bind(Date.now() - INTAKE[kind].keepMs)
+  ]);
+  return json({ ok: true }, 200, origin);
+}
+
 // Whitelist + size-cap the snapshot so the worker can't be used to smuggle arbitrary payloads to
 // the LLM: only the fields buildSnapshot() produces are forwarded, and nothing else.
 function sanitizeSnapshot(s, host) {
@@ -233,20 +334,25 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(origin) });
     // Public privacy policy for the Chrome Web Store listing — deliberately unauthenticated.
     if (url.pathname === '/privacy') return new Response(PRIVACY_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } });
-    if (url.pathname !== '/recipe' && url.pathname !== '/reports') return json({ error: 'not found' }, 404, origin);
+    const isIntake = url.pathname === '/feedback' || url.pathname === '/errors';
+    if (url.pathname !== '/recipe' && url.pathname !== '/reports' && !isIntake) return json({ error: 'not found' }, 404, origin);
+    // POST /feedback, POST /errors → reports from users of the published extension (public, rate-limited).
+    if (isIntake && req.method === 'POST') return intake(req, env, url.pathname.slice(1), origin);
     if (!authed(req, env)) return json({ error: 'unauthorized' }, 401, origin);
 
-    // GET /reports?limit=&host=… → the user-report log, most recent first (authed, read-only).
-    if (url.pathname === '/reports') {
+    // GET /reports | /feedback | /errors ?limit=&host=… → a log, most recent first (authed, read-only).
+    // /reports is your own worker's re-derivations; /feedback and /errors are what users sent you.
+    if (url.pathname === '/reports' || isIntake) {
       if (req.method !== 'GET') return json({ error: 'method not allowed' }, 405, origin);
       if (!env.REPORTS) return json({ error: 'reports DB not configured' }, 501, origin);
+      const table = url.pathname.slice(1);
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
-      const host = normalizeHost(url.searchParams.get('host'));
+      const host = table === 'errors' ? '' : normalizeHost(url.searchParams.get('host'));
       const q = host
-        ? env.REPORTS.prepare('SELECT * FROM reports WHERE host = ? ORDER BY ts DESC LIMIT ?').bind(host, limit)
-        : env.REPORTS.prepare('SELECT * FROM reports ORDER BY ts DESC LIMIT ?').bind(limit);
+        ? env.REPORTS.prepare(`SELECT * FROM ${table} WHERE host = ? ORDER BY ts DESC LIMIT ?`).bind(host, limit)
+        : env.REPORTS.prepare(`SELECT * FROM ${table} ORDER BY ts DESC LIMIT ?`).bind(limit);
       const { results } = await q.all();
-      return json({ reports: results }, 200, origin);
+      return json({ [table]: results }, 200, origin);
     }
 
     // GET /recipe?host=… → cached recipe or 404 (lets the extension warm its cache without an LLM call).

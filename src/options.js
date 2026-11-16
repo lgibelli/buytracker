@@ -1,4 +1,7 @@
 import { getSettings, setSettings } from './lib/storage.js';
+import { installErrorReporting } from './lib/report.js';
+
+installErrorReporting('options');
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -32,6 +35,7 @@ async function load() {
   $('defaultIntervalMin').value = String(s.defaultIntervalMin || 360);
   $('workerUrl').value = s.workerUrl || '';
   $('workerToken').value = s.workerToken || '';
+  $('sendErrorReports').checked = !!s.sendErrorReports;
   refreshWorkerConn();
   // If they're already using the experimental Claude path, don't hide their key behind a disclosure.
   if (s.apiKey) $('expClaude').open = true;
@@ -47,7 +51,8 @@ $('save').addEventListener('click', async () => {
     useLlmFallback: $('useLlmFallback').checked,
     defaultIntervalMin: Number($('defaultIntervalMin').value),
     workerUrl: $('workerUrl').value.trim().replace(/\/+$/, ''),
-    workerToken: $('workerToken').value.trim()
+    workerToken: $('workerToken').value.trim(),
+    sendErrorReports: $('sendErrorReports').checked
   });
   refreshWorkerConn();
   statusEl.textContent = 'Saved ✓';

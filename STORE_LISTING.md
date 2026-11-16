@@ -34,11 +34,11 @@ FEATURES
 PRIVACY
 • No account, no sign-up, no tracking.
 • Your watches, history, and settings stay in your browser.
-• BuyTracker never sends your data to us — we don't have a server.
+• Nothing is sent to us unless you choose to: a wrong-result report you send from a watch, or error reports if you turn them on in Settings. Both are anonymous.
 • Page text is only sent to Anthropic if YOU turn on the AI fallback and provide YOUR OWN API key.
 
 NOTE
-Checks run while your browser is open (extension-only mode). There's no cloud component.
+Checks run in your browser, while it is open (extension-only mode).
 ```
 
 ## Single purpose
@@ -68,7 +68,16 @@ Monitor product web pages the user chooses and notify them when the price, avail
 
 ## Data-use disclosures (Privacy practices tab)
 
-- **Data collected:** *Website content* only (page text/price is read; transmitted to Anthropic **only** if the user enables the AI fallback with their own key, and/or — redacted — to the user's own self-hosted recipe service if they configure one). Nothing else.
+- **Data collected** (tick these two, nothing else):
+  - *Website content*: page text/price is read; transmitted to Anthropic **only** if the user enables the
+    AI fallback with their own key, and/or — redacted — to the user's own self-hosted recipe service if
+    they configure one; and the price/stock read for one page goes to the developer in a wrong-result
+    report the user chooses to send.
+  - *Web history*: a wrong-result report the user chooses to send includes that one page's address
+    (without query string or fragment). Ticked to be conservative: it is a single page the user picked,
+    not browsing history.
+  - Error reports (opt-in in Settings) carry the error message, a code location, and the extension and
+    Chrome versions. None of the store's data categories applies to them.
 - **Certifications — all three are TRUE:**
   1. I do not sell or transfer user data to third parties outside of approved use cases.
   2. I do not use or transfer user data for purposes unrelated to the item's single purpose.
@@ -76,5 +85,5 @@ Monitor product web pages the user chooses and notify them when the price, avail
 - **Reviewer note:**
 
 ```
-The extension has no backend and collects nothing to the developer. The optional AI fallback is off by default; when the user enables it and supplies their own Anthropic API key, the text of the user's watched page is sent directly from the user's browser to api.anthropic.com to detect offers. The API key is stored locally only. Separately and also off by default, the user may self-host an open-source helper service on their own Cloudflare account (URL + token entered in settings); when configured, a PII-redacted snapshot of a watched page is sent to that user-owned endpoint once per site to derive parsing rules. The developer operates neither endpoint and receives no data.
+The extension sends nothing to the developer unless the user chooses to, in two opt-in ways: (1) from a watch's "Wrong result? Report" form, the user can tick "Also send this report to the developer" (or press "Send to the developer"); the report holds that page's address without query string or fragment, the price/stock the extension read, and the user's correction. (2) In Settings, "Send error reports to the developer" (off by default) sends errors from the extension's own code, with web addresses, emails and quoted text removed. Both go to the developer's Cloudflare Worker (buytracker-recipes.nervoso.workers.dev), carry no account or identifier, and are rate-limited. The optional AI fallback is off by default; when the user enables it and supplies their own Anthropic API key, the text of the user's watched page is sent directly from the user's browser to api.anthropic.com to detect offers. The API key is stored locally only. Separately and also off by default, the user may self-host an open-source helper service on their own Cloudflare account (URL + token entered in settings); when configured, a PII-redacted snapshot of a watched page is sent to that user-owned endpoint once per site to derive parsing rules.
 ```

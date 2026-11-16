@@ -24,6 +24,21 @@ All require `Authorization: Bearer <AUTH_TOKEN>`.
 - `DELETE /recipe?host=<host>` — invalidate a stale recipe.
 - `GET /reports?limit=&host=` — the user-report log (most recent first) for review. Requires the
   optional `REPORTS` D1 binding; returns `501` if it isn't configured.
+- `GET /feedback?limit=&host=`, `GET /errors?limit=` — what users of the published extension chose
+  to send you (see below).
+
+**Public, no token** (the published extension can't hold a secret):
+
+- `POST /feedback` — a wrong-result report a user chose to send (`src/lib/report.js` →
+  `sendFeedback`): page address without query string, what BuyTracker read, the correction, the outcome.
+- `POST /errors` — an error from BuyTracker's own code, sent only while the user has "Send error
+  reports" on in Settings, already scrubbed of web addresses, emails and quoted text.
+
+Both whitelist and cap every field, take at most 16 KB, and are rate-limited in D1: per client
+(a keyed hash of day + IP, deleted the next day) 20 reports and 50 errors a day, and at most 1,000
+reports and 5,000 errors a day in total, so a flood stays inside D1's free allowance. Reports are
+pruned after a year, errors after 90 days (`INTAKE` in `src/index.js`; `privacy.html` states the
+same). Read them with `npm run feedback` / `npm run errors`, or `GET` with your token.
 
 `host` is normalised (lowercased, leading `www.` stripped).
 

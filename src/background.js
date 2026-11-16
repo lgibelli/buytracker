@@ -6,6 +6,12 @@ import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitiz
 import {
   getSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice
 } from './lib/storage.js';
+import { installErrorReporting, reportError, isBug, sendFeedback } from './lib/report.js';
+
+// Error reports go out only while the user has them on in Settings (off by default): uncaught errors
+// here, and caught ones that are bugs in our own code rather than a store or the network failing.
+installErrorReporting('background');
+const reportBug = (e) => { if (isBug(e)) reportError(e, 'background'); };
 
 const TICK_MIN = 15;
 const RECIPE_STALE_MS = 7 * 24 * 60 * 60 * 1000; // re-derive a stuck per-site recipe at most weekly
@@ -24,7 +30,7 @@ chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome.html') });
 });
 chrome.runtime.onStartup.addListener(() => { chrome.alarms.create('tick', { periodInMinutes: TICK_MIN }); setupMenus(); });
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'tick') checkDue().catch((e) => console.warn('tick', e)); });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'tick') checkDue().catch((e) => { console.warn('tick', e); reportBug(e); }); });
 
 chrome.notifications.onClicked.addListener(async (id) => {
   const [tag, wid] = id.split('|');
@@ -48,14 +54,14 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
         // Ack right away so the popup can close — it MUST close for the user to click the page.
         // Awaiting the full pick would keep the popup (and the message channel) open until the
         // click, which never comes because the popup is covering the page. The picker runs detached.
-        addAreaFromTab().catch((e) => console.warn('area', e));
+        addAreaFromTab().catch((e) => { console.warn('area', e); reportBug(e); });
         return sendResponse({ ok: true });
       }
       if (msg.type === 'checkNow') return sendResponse({ ok: true, watch: await checkWatch(await getWatch(msg.id)) });
       if (msg.type === 'checkAll') { await checkDue(true); return sendResponse({ ok: true }); }
-      if (msg.type === 'reportWrong') return sendResponse({ ok: true, watch: await reportWrong(msg.id, msg.feedback) });
+      if (msg.type === 'reportWrong') return sendResponse({ ok: true, ...(await reportWrong(msg.id, msg.feedback, !!msg.send)) });
       sendResponse({ ok: false, error: 'unknown message' });
-    } catch (e) { sendResponse({ ok: false, error: String(e && e.message || e) }); }
+    } catch (e) { reportBug(e); sendResponse({ ok: false, error: String(e && e.message || e) }); }
   })();
   return true;
 });
@@ -241,19 +247,44 @@ async function extractViaTab(url, selector, opts = {}) {
   } finally { try { await chrome.tabs.remove(tab.id); } catch { /* gone */ } }
 }
 
-// User-reported wrong result → force-re-derive this host's recipe, feeding the user's correction to
-// the worker LLM as a trusted hint, then re-check the watch so the fix shows immediately. Whole-page
-// watches only (a recipe describes the main product, not an area sub-region). Bypasses the weekly
-// staleness cap on purpose — the user just told us the cached recipe is wrong — but still respects
-// the worker's hard daily budget (429 → park until the quota resets, same as the auto-derive path).
-async function reportWrong(id, feedback) {
+// User-reported wrong result. With the user's own recipe worker, it is fixed: see rederiveFor. With
+// `send` (the user ticked "send to the developer", or has no worker and pressed "Send to the
+// developer"), the report also goes to the developer, with what the re-check read, so stores BuyTracker
+// misreads get fixed for everyone. Resolves to { watch, sent }.
+async function reportWrong(id, feedback, send) {
   const watch = await getWatch(id);
   if (!watch) throw new Error('Watch not found');
   if (watch.selector) throw new Error('Reporting a wrong result works on whole-page watches, not area watches.');
   const settings = await getSettings();
+  const recipe = await getRecipe(watch.url).catch(() => null); // the recipe that read it wrong
+  const share = (outcome, after) => sendFeedback({ watch, recipe, feedback, outcome, after });
   if (!settings.workerUrl || !settings.workerToken) {
-    throw new Error('Set up the recipe worker in Settings first — that’s what re-derives the fix.');
+    if (!send) throw new Error('Set up the recipe worker in Settings first — that’s what re-derives the fix.');
+    await share('not_attempted', null);
+    return { watch, sent: true };
   }
+  let after;
+  try { after = await rederiveFor(watch, feedback, settings); }
+  catch (e) { if (send) await share('error', null).catch(() => {}); throw e; }
+  const sent = send ? await share(fixOutcome(feedback, after), after).then(() => true, () => false) : false;
+  return { watch: after, sent };
+}
+
+// Whether the re-check now reads what the user said the page shows.
+function fixOutcome(fb, w) {
+  const ok = [];
+  if (fb.correct_availability) ok.push(availState(w.lastAvailability) === fb.correct_availability);
+  if (fb.correct_price != null) ok.push(w.lastPrice != null && Math.abs(w.lastPrice - fb.correct_price) < 0.005);
+  return !ok.length ? 'rederived' : ok.every(Boolean) ? 'fixed' : 'still_wrong';
+}
+
+// Force-re-derive this host's recipe, feeding the user's correction to the worker LLM as a trusted
+// hint, then re-check the watch so the fix shows immediately. Whole-page watches only (a recipe
+// describes the main product, not an area sub-region). Bypasses the weekly staleness cap on purpose —
+// the user just told us the cached recipe is wrong — but still respects the worker's hard daily
+// budget (429 → park until the quota resets, same as the auto-derive path).
+async function rederiveFor(watch, feedback, settings) {
+  const id = watch.id;
   if (Date.now() < await derivePausedUntil()) {
     throw new Error('Daily LLM budget reached — re-derivation retries automatically tomorrow.');
   }
@@ -579,6 +610,7 @@ async function runCheck(watch) {
     if (saved) fireNotifications(watch, { change, price: res.price, currency: res.currency, availability: watch.lastAvailability, newOffer: newOfferEdge });
     return watch;
   } catch (e) {
+    reportBug(e);
     watch.lastStatus = 'error'; watch.lastError = String(e.message || e); watch.lastCheckedAt = now;
     await saveChecked(watch); return watch;
   }
@@ -635,7 +667,7 @@ async function checkPass(force) {
   for (const w of Object.values(watches)) {
     if (w.paused) continue;
     if (force || now - (w.lastCheckedAt || 0) >= (w.intervalMin || 360) * 60000) {
-      try { await checkWatch(w); } catch (e) { console.warn('check', w.id, e); }
+      try { await checkWatch(w); } catch (e) { console.warn('check', w.id, e); reportBug(e); }
     }
   }
 }

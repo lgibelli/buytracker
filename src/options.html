@@ -190,6 +190,16 @@
     </div>
   </section>
 
+  <!-- Opt-in error reports (src/lib/report.js) -->
+  <section class="section">
+    <h2>Error reports</h2>
+    <div class="check">
+      <input id="sendErrorReports" type="checkbox">
+      <label for="sendErrorReports">Send error reports to the developer</label>
+    </div>
+    <p class="hint">Off unless you turn it on. When BuyTracker hits a bug in its own code, it sends the error message, where in the code it happened, your extension and Chrome versions. Web addresses and page text are removed first, and nothing about your watches is included. No account, no ID. Each error is sent at most once a day. <a href="https://buytracker-recipes.nervoso.workers.dev/privacy" target="_blank" rel="noopener">Privacy policy</a></p>
+  </section>
+
   <!-- EXPERIMENTAL: direct Claude API -->
   <details class="exp" id="expClaude">
     <summary>

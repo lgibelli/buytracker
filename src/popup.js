@@ -1,6 +1,9 @@
 import { getWatches, updateWatch, deleteWatch, getSettings, getUi, setUi, availState } from './lib/storage.js';
 import { priceChartSVG } from './lib/chart.js';
 import { titleParts } from './lib/titles.js';
+import { installErrorReporting } from './lib/report.js';
+
+installErrorReporting('popup');
 
 const listEl = document.getElementById('list');
 const emptyEl = document.getElementById('empty');
@@ -61,7 +64,9 @@ function modeBadge(w) {
 // The headline price is `lastPrice`, which is sticky across checks that read nothing — but it is
 // cleared once a product is known unpurchasable with no price of its own (see recordObservation),
 // so the card reads "—" rather than presenting a stale number as this product's current price.
-function card(w, tp) {
+// `canFix`: the user has their own recipe worker, so a report re-derives the fix; without one, a report
+// can only go to the developer.
+function card(w, tp, canFix) {
   const cur = w.currency || '';
   const opts = INTERVALS.map(([v, l]) => `<option value="${v}" ${w.intervalMin === v ? 'selected' : ''}>${l}</option>`).join('');
   // Surface trouble in the collapsed row so a blocked/errored watch isn't hidden behind the fold.
@@ -92,8 +97,8 @@ function card(w, tp) {
       <div class="chart">${priceChartSVG(w.history, { currency: cur, width: 338, height: 110 })}</div>
       ${w.lastSummary ? `<div class="summary">“${esc(w.lastSummary)}”</div>` : ''}
       ${w.selector ? '' : `<div class="report">
-        <button class="report-open" data-act="report-open" type="button">Wrong result? Report &amp; fix</button>
-        <div class="report-form hidden">
+        <button class="report-open" data-act="report-open" type="button">${canFix ? 'Wrong result? Report &amp; fix' : 'Wrong result? Report it'}</button>
+        <div class="report-form hidden"${canFix ? ' data-fix="1"' : ''}>
           <div class="seg">
             <button type="button" data-act="report-choice" data-fb="in">In stock</button>
             <button type="button" data-act="report-choice" data-fb="out">Out of stock</button>
@@ -101,8 +106,10 @@ function card(w, tp) {
           </div>
           <input class="report-price hidden" type="number" step="0.01" inputmode="decimal" placeholder="correct price">
           <input class="report-note" type="text" maxlength="300" placeholder="optional hint: where should it look? (e.g. the price on the right)">
+          ${canFix ? '<label class="report-send"><input type="checkbox"> Also send this report to the developer</label>' : ''}
+          <p class="report-fine">${canFix ? 'If ticked, BuyTracker' : 'BuyTracker'} sends the page address (without anything after “?”), what it read here, and your correction. No account, no ID.</p>
           <div class="report-row">
-            <button class="report-submit primary" data-act="report-submit" type="button">Submit &amp; re-derive</button>
+            <button class="report-submit primary" data-act="report-submit" type="button">${canFix ? 'Submit &amp; re-derive' : 'Send to the developer'}</button>
             <span class="report-status"></span>
           </div>
         </div>
@@ -118,11 +125,12 @@ async function render() {
   // Sibling listings (e.g. the 256 GB and 512 GB of one product) get the words that tell them apart
   // pinned after their shared, ellipsized start.
   const parts = titleParts(arr.map((w) => w.title || w.url));
-  listEl.innerHTML = arr.map((w, i) => card(w, parts[i])).join('');
+  const canFix = !!(settings.workerUrl && settings.workerToken);
+  listEl.innerHTML = arr.map((w, i) => card(w, parts[i], canFix)).join('');
 
   // Just-in-time hint: only once a real watch shows a store BuyTracker couldn't read on its own,
   // and only while neither fallback (worker or Claude key) is configured, and not yet dismissed.
-  const configured = !!(settings.workerUrl && settings.workerToken) || !!settings.apiKey;
+  const configured = canFix || !!settings.apiKey;
   const hasUnreadable = arr.some((w) => w.lastStatus === 'no_data' || w.lastStatus === 'blocked');
   tipEl.classList.toggle('hidden', ui.dismissedWorkerHint || configured || !hasUnreadable);
 
@@ -155,10 +163,14 @@ async function busy(fn) {
   await render();
 }
 
-// Send a user correction for a watch → the worker LLM re-derives the site's recipe, then the watch
-// is re-checked. Can take ~40s (tab + LLM); the SW finishes even if the popup closes meanwhile.
+// Send a user correction for a watch. With the user's own worker, its LLM re-derives the site's recipe
+// and the watch is re-checked: ~40s (tab + LLM), and the SW finishes even if the popup closes. It also
+// goes to the developer if the box is ticked. Without a worker, sending it to the developer is all
+// Submit does: pressing "Send to the developer" is the consent.
 async function submitReport(card, id) {
   const form = card.querySelector('.report-form');
+  const canFix = !!form.dataset.fix;
+  const send = canFix ? form.querySelector('.report-send input').checked : true;
   const statusEl = form.querySelector('.report-status');
   const choice = form.dataset.choice || null;
   const note = form.querySelector('.report-note').value.trim();
@@ -174,11 +186,12 @@ async function submitReport(card, id) {
   }
   const btn = form.querySelector('.report-submit');
   btn.disabled = true;
-  statusEl.className = 'report-status'; statusEl.textContent = 're-deriving… (you can close this)';
+  statusEl.className = 'report-status'; statusEl.textContent = canFix ? 're-deriving… (you can close this)' : 'sending…';
   try {
-    const r = await chrome.runtime.sendMessage({ type: 'reportWrong', id, feedback });
-    if (!r?.ok) throw new Error(r?.error || 'failed to re-derive');
-    await render(); // reflects the corrected check
+    const r = await chrome.runtime.sendMessage({ type: 'reportWrong', id, feedback, send });
+    if (!r?.ok) throw new Error(r?.error || (canFix ? 'failed to re-derive' : 'failed to send'));
+    if (canFix) { await render(); return; } // reflects the corrected check
+    statusEl.className = 'report-status ok'; statusEl.textContent = 'Sent. Thanks, this helps fix this store.';
   } catch (e) {
     btn.disabled = false;
     statusEl.className = 'report-status err'; statusEl.textContent = e.message || String(e);
