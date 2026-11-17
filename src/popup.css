@@ -97,18 +97,6 @@ input.target { width: 78px; }
   background: rgba(31,111,235,.12); border: 1px solid rgba(31,111,235,.3); color: #9dc3ff; }
 .ew-ico svg { width: 14px; height: 14px; }
 
-/* One-time coachmark overlay (header stays above it, so the toolbar reads as highlighted) */
-.tour { position: fixed; inset: 0; z-index: 50; background: rgba(6,8,11,.72);
-  display: flex; align-items: flex-start; justify-content: center; }
-.tour-card { position: relative; margin-top: 96px; width: 300px; background: #141a22;
-  border: 1px solid #2a3340; border-radius: 12px; padding: 16px; box-shadow: 0 14px 44px -14px rgba(0,0,0,.75); }
-.tour-card::before { content: ""; position: absolute; top: -7px; left: 50%; margin-left: -6px;
-  width: 12px; height: 12px; background: #141a22; border-left: 1px solid #2a3340; border-top: 1px solid #2a3340; transform: rotate(45deg); }
-.tour-card h3 { margin: 0 0 6px; font-size: 14px; font-weight: 640; }
-.tour-card p { margin: 0; font-size: 12.5px; color: #9aa7b4; line-height: 1.5; }
-.tour-card p b { color: #e6edf3; font-weight: 600; }
-.tour-go { margin-top: 14px; width: 100%; justify-content: center; }
-
 footer { color: #7a8794; }
 
 /* Report-wrong → re-derive form (per card) */

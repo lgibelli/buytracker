@@ -1,6 +1,7 @@
-import { getSettings, setSettings } from './lib/storage.js';
+import { getSettings, setSettings, getUi, setUi } from './lib/storage.js';
 import { installErrorReporting } from './lib/report.js';
 import { browserAsks, granted, ask, revoke, PAGE_DATA, ERRORS } from './lib/consent.js';
+import { startTour } from './lib/tour.js';
 
 installErrorReporting('options');
 
@@ -112,4 +113,26 @@ $('testWorker').addEventListener('click', async () => {
   } catch (e) { chip(ws, 'err', 'cannot reach worker'); console.warn(e); }
 });
 
-load();
+// The second half of the popup's tour, when its last step sends the user here (popup.js). Settings may
+// already be open in a tab, which the browser then only brings forward: hence the storage listener.
+let touring = false;
+async function maybeTour() {
+  if (touring || !(await getUi()).settingsTour) return;
+  touring = true;
+  await setUi({ settingsTour: false });
+  const on = $('sendErrorReports').checked;
+  startTour([
+    { target: () => $('defaultIntervalMin').closest('.field'), interactive: true, title: 'How often to check',
+      text: 'New watches are checked this often while your browser is open. To change one watch, open its card in the popup.' },
+    { target: () => $('sendErrorReports').closest('.section'), interactive: true, title: 'Help fix bugs',
+      text: `${on ? 'Please keep error reports on.' : 'Please consider turning error reports on.'} When BuyTracker’s own code breaks, the developer learns what failed and can fix it. Never your watches or the pages you visit, and no account or ID.` },
+    { target: () => $('save'), interactive: true, title: 'Save',
+      text: 'Changed something? Press <b>Save changes</b> to keep it.' },
+  ], { done: () => { touring = false; } });
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.ui?.newValue?.settingsTour) maybeTour();
+});
+
+load().then(maybeTour);

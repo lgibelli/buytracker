@@ -175,7 +175,7 @@ try {
   await popup.bringToFront();
   await popup.evaluate(() => location.reload());
   await sleep(1200);
-  if (await popup.$eval('#tour', (t) => !t.classList.contains('hidden'))) { await popup.click('#tourGo'); await sleep(300); }
+  if (await popup.$('#tourSkip')) { await popup.click('#tourSkip'); await sleep(300); }
   const offers = await popup.$$eval('[data-act="offer-allow"]', (b) => b.map((x) => x.textContent));
   ok(offers.length === 1 && offers[0] === 'Allow for localhost', `popup shows ${JSON.stringify(offers)}`);
   if (offers.length) {
@@ -192,7 +192,7 @@ try {
   // see a reload inside an extension page, so the reloaded one's handles are stale.
   const pop = await openExt(popup, 'popup.html');
   await pop.bringToFront();
-  if (await pop.$eval('#tour', (t) => !t.classList.contains('hidden'))) { await pop.click('#tourGo'); await sleep(300); }
+  if (await pop.$('#tourSkip')) { await pop.click('#tourSkip'); await sleep(300); }
   const before = await pop.$$eval('.card', (c) => c.length);
   await pop.click('.card .del');
   await sleep(300);
