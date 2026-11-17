@@ -1,0 +1,43 @@
+/* Step-by-step coachmark tour (lib/tour.js), on the popup and the Settings page. Self-contained:
+   the two pages style their own buttons differently. */
+/* No scrolling under the tour. The body only in the popup (bt-fit), where it's the scroller: on a
+   page, a clipped body would become the scroll box of its sticky elements (Settings' save bar). */
+html.bt-touring, html.bt-touring.bt-fit body { overflow: hidden !important; }
+.bt-tour { position: fixed; inset: 0; z-index: 2147483000; animation: bt-tour-in .18s ease; }
+.bt-tour [hidden] { display: none !important; }
+.bt-tour-block { position: absolute; inset: 0; }
+.bt-tour-block.dim { background: rgba(6,8,11,.72); }
+/* The highlight: a ring, and around it a shadow wide enough to dim the whole page. */
+.bt-tour-hole { position: absolute; pointer-events: none;
+  box-shadow: 0 0 0 2px #1f6feb, 0 0 0 200vmax rgba(6,8,11,.72); }
+.bt-tour-card { position: absolute; box-sizing: border-box; background: #141a22; color: #e6edf3;
+  border: 1px solid #2a3340; border-radius: 12px; padding: 14px 16px 12px;
+  box-shadow: 0 16px 48px -12px rgba(0,0,0,.8); font-size: 12.5px; line-height: 1.5; text-align: left; }
+.bt-tour-arrow { position: absolute; width: 12px; height: 12px; background: #141a22; transform: rotate(45deg); }
+.bt-tour-card.below .bt-tour-arrow { top: -7px; border-left: 1px solid #2a3340; border-top: 1px solid #2a3340; }
+.bt-tour-card.above .bt-tour-arrow { bottom: -7px; border-right: 1px solid #2a3340; border-bottom: 1px solid #2a3340; }
+.bt-tour-card.center .bt-tour-arrow { display: none; }
+.bt-tour-dots { display: flex; gap: 5px; margin-bottom: 10px; }
+.bt-tour-dots i { width: 6px; height: 6px; border-radius: 3px; background: #2a3340; transition: width .2s ease, background .2s ease; }
+.bt-tour-dots i.on { width: 16px; background: #1f6feb; }
+.bt-tour-card h3 { margin: 0 0 4px; font-size: 14px; font-weight: 640; letter-spacing: -.01em; color: #e6edf3; }
+.bt-tour-card p { margin: 0; color: #9aa7b4; }
+.bt-tour-card p b { color: #e6edf3; font-weight: 600; }
+.bt-tour-actions { display: flex; align-items: center; gap: 6px; margin-top: 14px; }
+.bt-tour-actions .sp { flex: 1; }
+.bt-tour button { display: inline-flex; align-items: center; justify-content: center; margin: 0;
+  font: inherit; font-size: 12.5px; font-weight: 560; line-height: 1.2; border-radius: 7px; padding: 7px 12px;
+  cursor: pointer; border: 1px solid #2a3340; background: #1b222c; color: #e6edf3; }
+.bt-tour button:hover { background: #232c38; }
+.bt-tour button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.bt-tour button.primary:hover { background: #2a7bff; border-color: #2a7bff; }
+.bt-tour button.text { background: none; border-color: transparent; color: #8b97a4; padding-left: 4px; padding-right: 4px; }
+.bt-tour button.text:hover { color: #e6edf3; }
+.bt-tour button:focus-visible { outline: 2px solid rgba(31,111,235,.65); outline-offset: 1px; }
+.bt-tour.animate .bt-tour-hole, .bt-tour.animate .bt-tour-card {
+  transition: top .22s ease, left .22s ease, width .22s ease, height .22s ease, border-radius .22s ease; }
+@keyframes bt-tour-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .bt-tour { animation: none; }
+  .bt-tour.animate .bt-tour-hole, .bt-tour.animate .bt-tour-card, .bt-tour-dots i { transition: none; }
+}

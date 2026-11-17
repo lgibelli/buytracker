@@ -4,6 +4,7 @@ import { priceChartSVG } from './lib/chart.js';
 import { titleParts } from './lib/titles.js';
 import { installErrorReporting } from './lib/report.js';
 import { ask, sendable, PAGE_DATA } from './lib/consent.js';
+import { startTour } from './lib/tour.js';
 
 installErrorReporting('popup');
 
@@ -155,16 +156,34 @@ async function render() {
   maybeShowTour(ui);
 }
 
-// First-ever popup open: show a one-time coachmark pointing at the toolbar.
+// First popup open: a tour of the toolbar (lib/tour.js). Ending it any way but closing the popup counts
+// as seen. Its last step continues on the Settings page (options.js), through ui.settingsTour.
+let touring = false;
 function maybeShowTour(ui) {
-  if (ui.seenTour) return;
-  document.getElementById('tour').classList.remove('hidden');
+  if (ui.seenTour || touring) return;
+  touring = true;
+  const $ = (id) => document.getElementById(id);
+  const firstCard = () => listEl.querySelector('.card');
+  startTour([
+    { target: () => $('add'), title: 'Watch a product',
+      text: 'On a product page, press <b>Watch this page</b>. BuyTracker keeps checking its price and stock, and notifies you when the price drops or it’s back in stock.' },
+    { target: () => $('addArea'), title: 'Or just one part of a page',
+      text: 'Press <b>Area</b>, then click a price, a coupon or a banner: you’re notified when that part changes. Right-clicking a page or a link works too.' },
+    ...(firstCard() ? [{ target: firstCard, title: 'Your watches',
+      text: 'Click a watch to see its price history, set a target price, change how often it’s checked, or report a wrong price.' }] : []),
+    { target: () => $('checkAll'), title: 'Check now',
+      text: 'Watches are checked on their own while your browser is open. This checks them all right away.' },
+    { target: () => $('opts'), title: 'Settings',
+      text: 'Choose how often new watches are checked, and help fix bugs by sending error reports.',
+      primary: { label: 'Show me', action: openSettingsTour } },
+  ], { fitHeight: true, done: () => setUi({ seenTour: true }) });
 }
 
-document.getElementById('tourGo').addEventListener('click', async () => {
-  document.getElementById('tour').classList.add('hidden');
-  await setUi({ seenTour: true });
-});
+async function openSettingsTour() {
+  await setUi({ seenTour: true, settingsTour: true });
+  await chrome.runtime.openOptionsPage();
+  window.close();
+}
 
 // The user's answer for a store. Allowing takes it off the declined list too (they can change their mind
 // in Settings, or by submitting a report).
