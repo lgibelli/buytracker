@@ -28,7 +28,7 @@ m.browser_specific_settings = {
     strict_min_version: '140.0',
     data_collection_permissions: {
       // Nothing is needed to use BuyTracker. Page data (a page address and an extract: the recipe
-      // service, the user's own worker or Claude key, wrong-result reports) is asked for when the user
+      // service, the user's own worker, wrong-result reports) is asked for when the user
       // first chooses one of those; error reports have their own switch. Keep in step with consent.js.
       required: ['none'],
       optional: ['websiteContent', 'browsingActivity', 'technicalAndInteraction']

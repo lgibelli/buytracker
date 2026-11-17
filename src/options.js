@@ -48,19 +48,19 @@ $('ver').textContent = `v${chrome.runtime.getManifest().version}`;
 
 async function load() {
   const s = await getSettings();
-  $('apiKey').value = s.apiKey || '';
-  $('model').value = s.model || 'claude-haiku-4-5';
-  $('useLlmFallback').checked = s.useLlmFallback !== false;
   $('defaultIntervalMin').value = String(s.defaultIntervalMin || 360);
   $('workerUrl').value = s.workerUrl || '';
   $('workerToken').value = s.workerToken || '';
   $('recipeService').checked = s.recipeService !== false;
   // In Firefox the switch is Firefox's own permission for error reports (also offered while installing).
   $('sendErrorReports').checked = browserAsks() ? await granted(ERRORS) : !!s.sendErrorReports;
-  // Don't hide a setup they already use behind a disclosure.
-  if (s.apiKey) $('expClaude').open = true;
-  if (s.workerUrl) $('expWorker').open = true;
+  // The experimental section stays collapsed even when it's in use; its summary says so instead.
+  showWorkerInUse(s.workerUrl);
   renderHosts();
+}
+
+function showWorkerInUse(url) {
+  $('workerInUse').textContent = url ? 'in use: your own recipe worker' : 'your own recipe worker';
 }
 
 // In Firefox the error-report switch acts at once: it asks for, or gives back, Firefox's permission.
@@ -72,21 +72,20 @@ $('sendErrorReports').addEventListener('click', (e) => {
 });
 
 $('save').addEventListener('click', async () => {
-  // A Claude key or a worker of their own sends pages, so Firefox has to allow it. Asked before
-  // anything is awaited, for the same reason as above.
-  const consent = ($('apiKey').value.trim() || $('workerUrl').value.trim()) ? ask(PAGE_DATA) : null;
+  // A worker of their own gets page extracts, so Firefox has to allow it. Asked before anything is
+  // awaited, for the same reason as above.
+  const workerUrl = $('workerUrl').value.trim().replace(/\/+$/, '');
+  const consent = workerUrl ? ask(PAGE_DATA) : null;
   await setSettings({
-    apiKey: $('apiKey').value.trim(),
-    model: $('model').value,
-    useLlmFallback: $('useLlmFallback').checked,
     defaultIntervalMin: Number($('defaultIntervalMin').value),
-    workerUrl: $('workerUrl').value.trim().replace(/\/+$/, ''),
+    workerUrl,
     workerToken: $('workerToken').value.trim(),
     recipeService: $('recipeService').checked,
     sendErrorReports: $('sendErrorReports').checked
   });
+  showWorkerInUse(workerUrl);
   if (consent && !(await consent)) {
-    statusEl.textContent = 'Saved, but Firefox didn’t allow sending page data, so the Claude API and your own worker stay off.';
+    statusEl.textContent = 'Saved, but Firefox didn’t allow sending page data, so your own worker stays off.';
     statusEl.style.color = 'var(--amber)';
     return;
   }
@@ -111,27 +110,6 @@ $('testWorker').addEventListener('click', async () => {
     if (auth.status === 401) chip(ws, 'err', 'reachable, token rejected');
     else chip(ws, auth.ok ? 'ok' : 'warn', auth.ok ? 'reachable, token OK' : `reachable, token check HTTP ${auth.status}`);
   } catch (e) { chip(ws, 'err', 'cannot reach worker'); console.warn(e); }
-});
-
-$('test').addEventListener('click', async () => {
-  const as = $('apiStatus');
-  const apiKey = $('apiKey').value.trim();
-  if (!apiKey) { chip(as, 'warn', 'enter a key first'); return; }
-  chip(as, '', 'testing…');
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({ model: $('model').value, max_tokens: 8, messages: [{ role: 'user', content: 'ping' }] })
-    });
-    if (res.ok) { chip(as, 'ok', 'key works'); }
-    else { const t = await res.text(); chip(as, 'err', `HTTP ${res.status}`); console.warn(t); }
-  } catch (e) { chip(as, 'err', 'network error'); console.warn(e); }
 });
 
 load();

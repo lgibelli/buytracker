@@ -55,6 +55,10 @@
       padding:3px 8px; border-radius:999px; color:var(--accent-ink);
       background:rgba(31,111,235,.14); border:1px solid rgba(31,111,235,.42); }
 
+    .errs { margin-top:12px; display:flex; align-items:flex-start; gap:10px; color:var(--muted); font-size:12.5px; padding:0 4px; }
+    .errs input { width:15px; height:15px; margin:2px 0 0; accent-color:var(--accent); flex:none; }
+    .errs label { cursor:pointer; }
+
     .actions { margin-top:32px; display:flex; align-items:center; gap:12px; }
     .btn {
       display:inline-flex; align-items:center; gap:8px; font:inherit; font-size:13.5px; font-weight:560;
@@ -114,9 +118,16 @@
   <div class="aside">
     <div class="txt">
       <h2>Tricky store? <span class="pill">Optional</span></h2>
-      <p>Most stores are read automatically, for free. For the few BuyTracker can't parse on its own, the free recipe service can learn them once. The watch asks you first, store by store.</p>
+      <p>Most stores are read automatically, for free. For the few BuyTracker can't parse on its own, the free recipe creator can learn them once. The watch asks you first, store by store.</p>
     </div>
     <button id="settings" class="btn" type="button">Open settings</button>
+  </div>
+
+  <!-- Error reports start on for a new install (background.js onInstalled); this is where the user hears
+       it and can turn them off. Hidden in Firefox, whose own install prompt asks instead. -->
+  <div class="errs" id="errs" hidden>
+    <input id="sendErrorReports" type="checkbox">
+    <label for="sendErrorReports">Send error reports when BuyTracker's own code breaks: the error and the BuyTracker and browser versions, never web addresses, page text or your watches. No account, no ID. You can change this in Settings.</label>
   </div>
 
   <div class="actions">
@@ -124,6 +135,6 @@
     <span class="foot">Checks run while your browser is open. <span id="ver"></span></span>
   </div>
 
-  <script src="welcome.js"></script>
+  <script type="module" src="welcome.js"></script>
 </body>
 </html>

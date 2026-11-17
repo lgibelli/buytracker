@@ -25,17 +25,17 @@ FEATURES
 • One-click watch — open a product page and hit "+ Watch page", or right-click any page or link.
 • Watch a specific area — click "+ Area" and select just the price/offer region of a page to monitor.
 • Price history — a clean chart of every price point BuyTracker has recorded.
-• Smart alerts — desktop notifications on price drops, restocks, a target price you set, or a new discount/offer.
+• Smart alerts — desktop notifications on price drops, restocks, a target price you set, or a change in an area you watch.
 • Set your own check interval per item and a target price.
 • Works broadly — uses a site's structured data and a fast path for Shopify stores; falls back to rendering the page when needed.
-• Optional AI offer detection — if you add your own Anthropic (Claude) API key, BuyTracker can spot new discounts on pages that don't expose a clean price. This is off by default and entirely optional.
-• Free recipe service for tricky stores — when BuyTracker can't read a store on its own, the watch offers to learn it. Only if you allow that store, a free service works out how to read it once; every later check runs in your browser. Power users can run their own copy instead.
+• Free recipe creator for tricky stores — when BuyTracker can't read a store on its own, the watch offers to learn it. Only if you allow that store, a free service works out how to read it once; every later check runs in your browser. Experts can run their own copy instead.
 
 PRIVACY
 • No account, no sign-up, no tracking.
 • Your watches, history, and settings stay in your browser.
-• Nothing is sent to us unless you choose to: a store you allow for the recipe service (its page address and a short extract of the product page, never anything about you), a wrong-result report you send from a watch, or error reports if you turn them on in Settings. All anonymous.
-• Page text is only sent to Anthropic if YOU turn on the AI fallback and provide YOUR OWN API key.
+• Nothing about the pages you watch is sent to us unless you choose to: a store you allow for the recipe creator (its page address and a short extract of the product page, never anything about you), or a wrong-result report you send from a watch.
+• Anonymous error reports about bugs in BuyTracker's own code (no web addresses, no page text) help fix it. They are on by default; turn them off on the welcome page or in Settings.
+• Everything sent is anonymous: no account, no ID.
 
 NOTE
 Checks run in your browser, while it is open (extension-only mode).
@@ -89,24 +89,24 @@ Monitor product web pages the user chooses and notify them when the price, avail
 | `activeTab` | When the user clicks "Watch this page" or "Watch area" in the popup, the extension acts on the user's current tab to capture that product. |
 | `storage` / `unlimitedStorage` | Stores the user's watches, settings, and per-item price history locally. `unlimitedStorage` is needed because price history accumulates over time for many tracked items. |
 | `alarms` | Schedules periodic background re-checks of the user's watched pages on the interval they set. |
-| `notifications` | Sends the user a desktop alert when a watched item drops in price, hits their target, comes back in stock, or shows a new offer. |
+| `notifications` | Sends the user a desktop alert when a watched item drops in price, hits their target, comes back in stock, or when an area the user watches changes. |
 | `contextMenus` | Adds right-click menu items so the user can start watching a page or link for price or availability changes. |
 
-**Remote code:** "No, I am not using remote code." (The Anthropic call is a data request via `fetch`, not loaded/executed code.)
+**Remote code:** "No, I am not using remote code." (The recipe service returns data, CSS selectors checked by `sanitizeRecipe()`, never code.)
 
 ## Data-use disclosures (Privacy practices tab)
 
 - **Data collected** (tick these two, nothing else):
   - *Website content*: page text/price is read; a short, redacted extract of a watched product page goes
     to the developer's recipe service **only** for a store the user allowed on that watch (or to the
-    user's own self-hosted copy, if configured); page text goes to Anthropic **only** if the user enables
-    the AI fallback with their own key; and the price/stock read for one page goes to the developer in a
-    wrong-result report the user chooses to send.
+    user's own self-hosted copy, if configured); and the price/stock read for one page goes to the
+    developer in a wrong-result report the user chooses to send.
   - *Web history*: the recipe service request and a wrong-result report each include that one watched
     page's address (without query string or fragment). Ticked to be conservative: it is a single page
     the user picked, not browsing history.
-  - Error reports (opt-in in Settings) carry the error message, a code location, and the extension and
-    Chrome versions. None of the store's data categories applies to them.
+  - Error reports (on for new installs; the welcome page says so and has the switch, also in Settings)
+    carry the error message, a code location, and the extension and Chrome versions, with web addresses
+    and page text removed. None of the store's data categories applies to them.
 - **Certifications — all three are TRUE:**
   1. I do not sell or transfer user data to third parties outside of approved use cases.
   2. I do not use or transfer user data for purposes unrelated to the item's single purpose.
@@ -114,7 +114,7 @@ Monitor product web pages the user chooses and notify them when the price, avail
 - **Reviewer note:**
 
 ```
-The extension sends nothing to the developer unless the user chooses to, in three opt-in ways: (0) when the extension can't read a store on its own, the watch's card offers the free recipe service; only if the user presses "Allow for <store>" (or submits a wrong-result report, whose form says so), the extension sends that product page's address without query string or fragment and a short extract of the page (title, prices, buttons, opening text, page data, with emails and phone numbers redacted). A Cloudflare Workers AI model turns it into CSS selectors for that store; the extract is not stored, and the selectors are shared with other users of the store once two different connections get the same ones. Allowed stores can be removed in Settings. (1) From a watch's "Wrong result? Report" form, the user can tick "Also send this report to the developer" (or press "Send to the developer"); the report holds that page's address without query string or fragment, the price/stock the extension read, and the user's correction. (2) In Settings, "Send error reports to the developer" (off by default) sends errors from the extension's own code, with web addresses, emails and quoted text removed. All go to the developer's Cloudflare Worker (buytracker-recipes.nervoso.workers.dev), carry no account or identifier, and are rate-limited. The optional AI fallback is off by default; when the user enables it and supplies their own Anthropic API key, the text of the user's watched page is sent directly from the user's browser to api.anthropic.com to detect offers. The API key is stored locally only. Instead of the developer's recipe service, the user may self-host the open-source service on their own Cloudflare account (URL entered in settings); then the same extract goes to that user-owned endpoint instead.
+The extension sends nothing about the user's pages to the developer unless the user chooses to, in two opt-in ways, plus anonymous error reports the user can turn off: (0) when the extension can't read a store on its own, the watch's card offers the free recipe service; only if the user presses "Allow for <store>" (or submits a wrong-result report, whose form says so), the extension sends that product page's address without query string or fragment and a short extract of the page (title, prices, buttons, opening text, page data, with emails and phone numbers redacted). A Cloudflare Workers AI model turns it into CSS selectors for that store; the extract is not stored, and the selectors are shared with other users of the store once two different connections get the same ones. Allowed stores can be removed in Settings. (1) From a watch's "Wrong result? Report" form, the user can tick "Also send this report to the developer" (or press "Send to the developer"); the report holds that page's address without query string or fragment, the price/stock the extension read, and the user's correction. (2) "Send error reports to the developer" (on for new installs, stated with its switch on the welcome page that opens at install, and in Settings) sends errors from the extension's own code, with web addresses, emails and quoted text removed, and nothing about the user's watches. All go to the developer's Cloudflare Worker (buytracker-recipes.nervoso.workers.dev), carry no account or identifier, and are rate-limited. Instead of the developer's recipe service, the user may self-host the open-source service on their own Cloudflare account (URL entered in settings); then the same extract goes to that user-owned endpoint instead.
 ```
 
 ---
@@ -134,7 +134,7 @@ Upload `buytracker-firefox.zip` (`node scripts/build-firefox.js`). Free; no deve
 - **Privacy policy:** paste the text of `PRIVACY.md` (AMO hosts it on the listing).
 - **Data collection:** declared in the manifest, so there's nothing to fill in on the form. Nothing
   is required. *Website content* and *Browsing activity* are optional and asked for when the user
-  allows a store, sends a wrong-result report, or saves a Claude key or a self-hosted worker. *Technical
+  allows a store, sends a wrong-result report, or saves a self-hosted worker. *Technical
   and interaction data* is optional and covers error reports (the Settings switch, also offered at install).
 - **Version notes (0.1.16):**
 
@@ -147,7 +147,7 @@ First Firefox release. Watch any product page for price drops, restocks and new 
 ```
 No account or login is needed. To test: open a product page (e.g. https://eu.magbak.com/products/magbak-phone-mount-and-charger-for-tesla-25w), click the toolbar icon, then "Watch this page". The popup shows the price and stock; the refresh button re-checks in the background. Right-click a page for the same via the context menu.
 
-Data: nothing leaves the browser unless the user chooses to, and never before Firefox's own data-collection consent (src/lib/consent.js requests it from the click that needs it; background.js runCheck/reportWrong and report.js check it before sending). Page data (websiteContent, browsingActivity) is used only: (1) when the user presses "Allow for <store>" on a store BuyTracker can't read, which sends that page's address without query string and a short extract to the developer's recipe service (buytracker-recipes.nervoso.workers.dev); (2) in a wrong-result report the user chooses to send; (3) if the user enters their own Anthropic API key or self-hosted worker. Error reports (technicalAndInteraction) are off unless the user turns them on. No account, no identifier.
+Data: nothing leaves the browser unless the user chooses to, and never before Firefox's own data-collection consent (src/lib/consent.js requests it from the click that needs it; background.js runCheck/reportWrong and report.js check it before sending). Page data (websiteContent, browsingActivity) is used only: (1) when the user presses "Allow for <store>" on a store BuyTracker can't read, which sends that page's address without query string and a short extract to the developer's recipe service (buytracker-recipes.nervoso.workers.dev); (2) in a wrong-result report the user chooses to send; (3) if the user enters their own self-hosted worker. Error reports (technicalAndInteraction) are sent only if the user allows them in Firefox's prompt or the Settings switch. No account, no identifier.
 
 The recipes the service returns are data, never code: CSS selectors and a dotted path to a page global, checked by sanitizeRecipe() and read by applyRecipe() in src/lib/recipe.js. <all_urls> is needed because any store's product page can be watched; pages are read only when the user adds a watch and on its scheduled re-checks.
 

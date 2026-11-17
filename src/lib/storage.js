@@ -4,11 +4,7 @@
 export const SERVICE_URL = 'https://buytracker-recipes.nervoso.workers.dev';
 
 const DEFAULT_SETTINGS = {
-  provider: 'anthropic',
-  model: 'claude-haiku-4-5',
-  apiKey: '',
   defaultIntervalMin: 360, // 6h — these are non-urgent buys
-  useLlmFallback: true,
   // Stores the generic extractors can't read get a per-site recipe, derived once and cached, instead of
   // an LLM call every check. By default from the free recipe service (SERVICE_URL), and only for stores
   // the user allowed on the watch's card: recipeHosts. recipeDeclined are the stores they said no to.
@@ -20,9 +16,22 @@ const DEFAULT_SETTINGS = {
   // prompt: the user runs it. The token is optional (it unlocks that worker's operator endpoints).
   workerUrl: '',
   workerToken: '',
-  // Send reports of bugs in BuyTracker's own code to the developer (src/lib/report.js). Opt-in.
+  // Send reports of bugs in BuyTracker's own code to the developer (src/lib/report.js). A fresh install
+  // turns this on (background.js onInstalled, disclosed on the welcome page); installs from before it
+  // did keep what they had.
   sendErrorReports: false
 };
+
+// Settings of the direct Claude API fallback, removed in 0.1.17. Dropped from storage on update so an
+// Anthropic key the extension no longer uses doesn't stay behind in it.
+const RETIRED_SETTINGS = ['provider', 'model', 'apiKey', 'useLlmFallback'];
+
+export async function dropRetiredSettings() {
+  const { settings } = await chrome.storage.local.get('settings');
+  if (!settings || !RETIRED_SETTINGS.some((k) => k in settings)) return;
+  for (const k of RETIRED_SETTINGS) delete settings[k];
+  await chrome.storage.local.set({ settings });
+}
 
 export async function getSettings() {
   const { settings } = await chrome.storage.local.get('settings');

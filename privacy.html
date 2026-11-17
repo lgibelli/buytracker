@@ -24,31 +24,24 @@
 </head>
 <body>
   <h1>🛒 BuyTracker — Privacy Policy</h1>
-  <div class="updated">Last updated: 2026-11-16</div>
+  <div class="updated">Last updated: 2026-11-17</div>
 
-  <p>BuyTracker has no accounts, analytics or ads. It sends nothing to the developer
-  unless you choose to, as described under <a href="#recipes">Recipe service</a> and
-  <a href="#reports">Reports you choose to send</a>.</p>
+  <p>BuyTracker has no accounts, analytics or ads. It sends nothing about the pages you watch
+  unless you choose to, as described under <a href="#recipes">Free recipe creator</a> and
+  <a href="#reports">Reports to the developer</a>. It sends anonymous error reports about bugs in
+  its own code, which you can turn off.</p>
 
   <h2>What the extension stores</h2>
   <p>Your list of watched pages, their price history, and your settings are stored
   locally in your browser's own extension storage. They never leave your device
   except as described below.</p>
 
-  <h2>Optional AI offer detection</h2>
-  <p>This feature is <strong>off by default</strong>. If you enable it and provide your
-  own Anthropic (Claude) API key, the text of a page you have chosen to watch is sent
-  directly from your browser to Anthropic (<code>api.anthropic.com</code>) to detect
-  prices and offers. Your API key is stored locally in your browser and is used only to
-  authenticate these requests. Anthropic's handling of that data is governed by
-  <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener">Anthropic's privacy policy</a>.</p>
-
-  <h2 id="recipes">Recipe service, store by store</h2>
+  <h2 id="recipes">Free recipe creator, store by store</h2>
   <p>When BuyTracker can't read a store on its own, that store's watch offers the free recipe
-  service, which the developer runs on Cloudflare (<code>buytracker-recipes.nervoso.workers.dev</code>).
+  creator, a service which the developer runs on Cloudflare (<code>buytracker-recipes.nervoso.workers.dev</code>).
   <strong>Nothing about a store is sent until you allow that store</strong>, on its watch or by
-  submitting a “Report &amp; fix” for it. You can remove a store, or turn the service off, in
-  Settings.</p>
+  submitting a “Report &amp; fix” for it. You can remove a store, or turn the recipe creator off,
+  in Settings.</p>
   <p>For a store you allowed, BuyTracker sends the product page's address without its query
   string or fragment, and a short extract of the page: its title, the prices and buttons near the
   product with their positions in the page, the start of its text, and data the page publishes
@@ -62,23 +55,25 @@
   once a week) or when you report a wrong result. All checks run in your browser.</p>
   <p>The service is shared and free, so it has a daily limit, and it counts requests per day by a
   keyed hash of your IP address, as described for reports below.</p>
-  <p>If you run your own copy of the service (Settings, “Your own recipe worker”), BuyTracker
+  <p>If you run your own copy of the service (Settings, “Experimental feature”), BuyTracker
   uses it for every store instead, and the developer receives none of this.</p>
 
-  <h2 id="reports">Reports you choose to send</h2>
-  <p>Nothing below is sent unless you act. Neither kind of report carries an account, an
-  install ID or any other identifier, so reports can't be linked to each other or to you.</p>
+  <h2 id="reports">Reports to the developer</h2>
+  <p>Neither kind of report carries an account, an install ID or any other identifier, so
+  reports can't be linked to each other or to you.</p>
   <ul>
     <li><strong>Wrong-result reports.</strong> When a watch shows the wrong price or stock, you
     can report it from the popup. The report goes to the developer only when you tick
     “Also send this report to the developer”, or press “Send to the developer” (shown when the
-    recipe service is off). It contains the page address without its query string
+    recipe creator is off). It contains the page address without its query string
     or fragment (nothing after “?” or “#”), the price, currency and stock state BuyTracker read,
     how it read the page (the parsing rules in use, if any, and the last error), your correction
-    and optional note, the extension version, and, if the recipe service re-checked the
+    and optional note, the extension version, and, if the recipe creator re-checked the
     page, what it read then.</li>
-    <li><strong>Error reports.</strong> Off by default: turn on “Send error reports to the
-    developer” in Settings. When BuyTracker hits a bug in its own code, it sends the error type
+    <li><strong>Error reports.</strong> On for a new install, as the welcome page says; turn off
+    “Send error reports to the developer” there or in Settings at any time. Installs from before
+    version 0.1.17 keep the choice they had (off unless turned on). In Firefox they are sent only
+    if you allow them in Firefox's own prompt. When BuyTracker hits a bug in its own code, it sends the error type
     and message, where in BuyTracker's code it happened, the extension version, and your browser
     (Chrome or Firefox) version and operating system (from the browser's user agent). Web addresses, email
     addresses and quoted text are removed first, and nothing about your watches is included.
@@ -96,7 +91,7 @@
   <h2>What we do NOT do</h2>
   <ul>
     <li>No analytics, tracking, ads, or accounts.</li>
-    <li>No identifiers: what you choose to send is anonymous.</li>
+    <li>No identifiers: everything BuyTracker sends is anonymous.</li>
     <li>We do not sell or share your data.</li>
   </ul>
 

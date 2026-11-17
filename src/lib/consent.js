@@ -4,8 +4,8 @@
 // prompt or later in about:addons. Chrome has no such API: there every check here answers yes, and
 // BuyTracker's own settings (per-store Allow, error reports) decide alone, as before.
 //
-// PAGE_DATA is anything that carries a page: the recipe service, the user's own worker, the direct
-// Claude API, and wrong-result reports (a page address and an extract). ERRORS is error reports.
+// PAGE_DATA is anything that carries a page: the recipe service, the user's own worker, and
+// wrong-result reports (a page address and an extract). ERRORS is error reports.
 export const PAGE_DATA = ['websiteContent', 'browsingActivity'];
 export const ERRORS = ['technicalAndInteraction'];
 
@@ -34,9 +34,9 @@ export function revoke(kinds) {
 
 // The settings a check runs with. If the browser has to allow sending page data and hasn't (Firefox,
 // never asked or turned off in about:addons), every route that would carry a page is off: the recipe
-// service for every store, the user's own worker, and the direct Claude API. Stores allowed earlier get
+// service for every store and the user's own worker. Stores allowed earlier get
 // their offer back on the card, and its Allow asks Firefox. Never save what this returns.
 export async function sendable(settings) {
   if (await granted(PAGE_DATA)) return settings;
-  return { ...settings, recipeHosts: [], workerUrl: '', workerToken: '', apiKey: '' };
+  return { ...settings, recipeHosts: [], workerUrl: '', workerToken: '' };
 }

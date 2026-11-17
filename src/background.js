@@ -1,10 +1,9 @@
 import { extractFromHtml, detectBlock, fnv1a } from './lib/extract.js';
-import { detectOffer } from './lib/llm.js';
 import { capturePage } from './lib/capture.js';
 import { pickArea } from './lib/picker.js';
 import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitizeRecipe, recipeServiceFor, recipeOfferFor } from './lib/recipe.js';
 import {
-  getSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice, SERVICE_URL
+  getSettings, setSettings, dropRetiredSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice, SERVICE_URL
 } from './lib/storage.js';
 import { installErrorReporting, reportError, isBug, sendFeedback } from './lib/report.js';
 import { sendable } from './lib/consent.js';
@@ -27,8 +26,13 @@ function setupMenus() {
 chrome.runtime.onInstalled.addListener((details) => {
   chrome.alarms.create('tick', { periodInMinutes: TICK_MIN, delayInMinutes: 1 });
   setupMenus();
-  // First install only: open a one-screen welcome tab. Skip it on updates/reloads.
-  if (details.reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome.html') });
+  // First install only: error reports start on (the welcome page says so, with the switch to turn them
+  // off), and a one-screen welcome tab opens. Installs from before keep the setting they had.
+  if (details.reason === 'install') {
+    setSettings({ sendErrorReports: true })
+      .finally(() => chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome.html') }));
+  }
+  if (details.reason === 'update') dropRetiredSettings().catch((e) => console.warn('settings cleanup', e));
 });
 chrome.runtime.onStartup.addListener(() => { chrome.alarms.create('tick', { periodInMinutes: TICK_MIN }); setupMenus(); });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'tick') checkDue().catch((e) => { console.warn('tick', e); reportBug(e); }); });
@@ -160,7 +164,7 @@ async function pauseDerivation(retryAfterSec) {
   const { recipeBudget } = await chrome.storage.local.get('recipeBudget');
   await chrome.storage.local.set({ recipeBudget: { pausedUntil: Date.now() + ms, notifiedDay: day } });
   if (recipeBudget?.notifiedDay !== day) {
-    toast('BuyTracker recipe service', 'Today\'s limit is reached, so new store recipes wait until tomorrow. Checks keep running as usual.');
+    toast('BuyTracker recipe creator', 'Today\'s limit is reached, so new store recipes wait until tomorrow. Checks keep running as usual.');
   }
 }
 
@@ -209,7 +213,7 @@ async function extractViaTab(url, selector, opts = {}) {
     const recipesAllowed = !selector;
     const cached = recipesAllowed ? (opts.recipe ?? await getRecipe(url)) : null;
     // Non-fatal: a throwing recipe (e.g. bad selector, tab navigated) must not abort the check — fall
-    // through to the generic result + LLM fallback, same as the derivation path below.
+    // through to the generic result, same as the derivation path below.
     if (cached) { try { apply(await runInPage(tab.id, applyRecipe, [cached])); } catch (e) { recipeError = 'recipe: ' + String(e.message || e); } }
 
     const need = opts.need || { price: true, avail: true };
@@ -224,7 +228,7 @@ async function extractViaTab(url, selector, opts = {}) {
     if (recipesAllowed && opts.derive && stillMissing && !svc && s && recipeOfferFor(s, url)) recipeOffer = true;
     if (recipesAllowed && opts.derive && stillMissing && svc && (!cached || stale)) {
       if (Date.now() < await derivePausedUntil()) {
-        recipeError = 'recipe: the recipe service reached today\'s limit — retrying automatically tomorrow';
+        recipeError = 'recipe: the recipe creator reached today\'s limit — retrying automatically tomorrow';
       } else {
         try {
           const snapshot = await runInPage(tab.id, buildSnapshot, [selector || null]);
@@ -233,7 +237,7 @@ async function extractViaTab(url, selector, opts = {}) {
         } catch (e) {
           if (e.status === 429) {
             await pauseDerivation(e.retryAfterSec);
-            recipeError = 'recipe: the recipe service reached today\'s limit — retrying automatically tomorrow';
+            recipeError = 'recipe: the recipe creator reached today\'s limit — retrying automatically tomorrow';
           } else {
             recipeError = 'recipe: ' + String(e.message || e);
           }
@@ -243,7 +247,7 @@ async function extractViaTab(url, selector, opts = {}) {
 
     return {
       // A DOM-scan guess is NOT structured: on a product with no price of its own (unavailable) it is
-      // some bystander's price — computeFrom holds it back so the LLM can rule on the page first.
+      // some bystander's price — computeFrom drops it then.
       status: 'ok', title: result.title, price, currency, availability, priceSource,
       hasStructuredPrice: price != null && priceSource !== 'dom',
       fullText: full, areaText: area, textHash: fnv1a((area || full).slice(0, 20000)),
@@ -266,7 +270,7 @@ async function reportWrong(id, feedback, send) {
   // The popup allows the store before asking for a fix (submitting the form is the consent).
   const svc = recipeServiceFor(settings, watch.url, SERVICE_URL);
   if (!svc) {
-    if (!send) throw new Error('Turn on the recipe service in Settings first — that’s what re-derives the fix.');
+    if (!send) throw new Error('Turn on the free recipe creator in Settings first — that’s what re-derives the fix.');
     await share('not_attempted', null);
     return { watch, sent: true };
   }
@@ -292,7 +296,7 @@ function fixOutcome(fb, w) {
 // budget (429 → park until the quota resets, same as the auto-derive path).
 async function rederiveFor(watch, feedback, svc) {
   const id = watch.id;
-  const limitMsg = 'The recipe service reached today’s limit. Try again tomorrow.';
+  const limitMsg = 'The recipe creator reached today’s limit. Try again tomorrow.';
   if (Date.now() < await derivePausedUntil()) throw new Error(limitMsg);
 
   const tab = await chrome.tabs.create({ url: watch.url, active: false });
@@ -320,67 +324,18 @@ async function rederiveFor(watch, feedback, svc) {
   return checkWatch(fresh);
 }
 
-// Tier 2: cheap LLM. Runs only when there's no structured price, or a watched area changed — and,
-// for whole-page watches, only when the page text actually changed since the last time we asked
-// (forceLlm) so a page that will never have a structured price doesn't cost an LLM call every tick.
-async function computeFrom(ex, watch, settings, forceLlm) {
-  let currency = ex.currency || watch.currency || null;
-  let availability = ex.availability || null;
-  // Structured prices (JSON-LD / Shopify .js / site recipe) are taken as-is. A rendered-DOM guess
-  // (priceSource 'dom': the most prominent currency amount on the page) is trusted only when the buy
-  // box says the product is purchasable — then that amount is almost certainly its price. When it
-  // isn't (unavailable, or unknown), the page may carry no price of its own and the guess is a
-  // bystander's: on an unavailable amazon.pl listing it was a sponsored carousel item, and it went
-  // out as a "price drop". Such a guess is held back so the LLM — told to ignore related items —
-  // rules on the page first; it is used only when no LLM verdict is available at all.
-  const guessOnly = ex.price != null && !ex.hasStructuredPrice && availState(availability) !== 'in';
-  const guess = guessOnly ? ex.price : null;
-  let price = guessOnly ? null : (ex.price ?? null);
-  let newOffer = false, summary = null, llmError = null, offerChecked = false, reused = false;
-
-  // An availability-only watch that already knows the stock state has nothing to ask the model: the
-  // price it would fill is one the watch never uses, and the call was paid on every page change.
-  const needsLlm = watch.selector ? true : (watch.watchType === 'availability' ? availability == null : price == null);
-  const allowLlm = needsLlm && forceLlm;
-  if (allowLlm && settings.useLlmFallback && settings.apiKey && (ex.fullText || ex.areaText)) {
-    try {
-      const r = await detectOffer({
-        apiKey: settings.apiKey, model: settings.model, baselineText: watch.baselineText,
-        currentText: ex.areaText || ex.fullText, lastPrice: watch.lastPrice ?? null, currency,
-        // What the page itself said about stock. Told to the model so an unavailable listing reads
-        // as "this product has no price right now" instead of "find me a number on this page".
-        knownAvailability: availability
-      });
-      if (price == null) price = r.price ?? null;
-      currency = r.currency || currency;
-      // The LLM only FILLS a missing availability — it must never override a deterministic one. The
-      // rendered buy box ("Add to cart" enabled / "sold out") reflects the selected variant far more
-      // reliably than the model reading page text, which was flipping in-stock items to "out of stock".
-      // Its "unknown" (the tool schema offers it) is no reading at all, not a stock state to record.
-      if (availability == null) availability = availState(r.availability) ? r.availability : null;
-      newOffer = !!r.new_offer;
-      summary = r.summary || null;
-      offerChecked = true;
-    } catch (e) { llmError = 'llm: ' + String(e.message || e); }
-  } else if (!watch.selector && needsLlm && !forceLlm) {
-    // Page text is unchanged since the last time we asked the LLM — reuse what it told us then
-    // instead of treating an unchanged, still-unstructured page as newly blank. "What it told us" is
-    // the last history point, which may legitimately be no price at all (unavailable) — NOT lastPrice,
-    // which is sticky for display and would resurrect the pre-outage price into the series.
-    const last = (watch.history || [])[(watch.history || []).length - 1];
-    price = last ? last.price : (watch.lastPrice ?? null);
-    if (availability == null) availability = watch.lastAvailability || null;
-    reused = true;
-  }
-  // No LLM verdict for this page state (not configured, no text, or the call failed) and nothing to
-  // reuse: the heuristic guess is the best we have — better than recording a blank.
-  if (price == null && !offerChecked && !reused) price = guess;
-  // Last gate, and it covers the LLM too: a price we merely READ off the page belongs to the product
-  // only if the product is purchasable (see trustedPrice). The model is asked for "the main product's
-  // price" and tool_choice forces it to answer, so on an unavailable listing whose only amounts are
-  // carousel neighbours' it hands back one of theirs — which then stuck as the watch's price.
-  price = trustedPrice(price, { structured: ex.hasStructuredPrice, availability });
-  return { price, currency, availability, newOffer, summary, llmError, offerChecked, reused };
+// Price and stock as the page itself states them. Structured prices (JSON-LD / Shopify .js / site
+// recipe) are taken as-is. A rendered-DOM guess (priceSource 'dom': the most prominent currency amount
+// on the page) is dropped when the product is known to be unpurchasable: such a listing usually shows
+// no price of its own, and every amount on it belongs to a neighbour — on an unavailable amazon.pl
+// listing it was a sponsored carousel item, and it went out as a "price drop" (see trustedPrice).
+function computeFrom(ex, watch) {
+  const availability = ex.availability || null;
+  return {
+    price: trustedPrice(ex.price ?? null, { structured: ex.hasStructuredPrice, availability }),
+    currency: ex.currency || watch.currency || null,
+    availability
+  };
 }
 
 // --- watch creation ---
@@ -391,14 +346,11 @@ async function saveNewWatch({ cap, selector, fetchMode, baseline, watchType = 'b
   const watch = {
     id: newId(), url: cap.url, title: cap.title, createdAt: now, watchType,
     currency: cap.product?.currency || null, intervalMin: settings.defaultIntervalMin, targetPrice: null,
-    selector: selector || null, fetchMode, baselineText: baseline || '',
-    // Seed the area hash from the baseline so the first re-check doesn't burn an LLM call.
+    selector: selector || null, fetchMode,
+    // What the watched area read when it was picked: a check that reads something else alerts.
     lastAreaHash: selector ? fnv1a((baseline || '').slice(0, 20000)) : null,
-    // NOT seeded (unlike lastAreaHash): a whole-page watch should still get one LLM attempt on its
-    // first real check even if the page hasn't changed since the baseline capture.
-    lastLlmHash: null,
     paused: false, history: [], lastCheckedAt: now, lastStatus: 'ok', lastError: null, lastSummary: null,
-    lastAvailability: cap.product?.availability || null, lastOfferActive: false
+    lastAvailability: cap.product?.availability || null
   };
   // Same rule as a re-check (computeFrom): a rendered-DOM guess is only the product's price when the
   // product can be bought. Adding a watch on an already-unavailable listing must not seed the series
@@ -487,7 +439,7 @@ async function contextAdd(info, tab, watchType) {
 
 // --- checking ---
 
-// A check can take ~40s (tab + LLM). Re-read the watch at write time so we never resurrect a
+// A check can take ~40s (a background tab). Re-read the watch at write time so we never resurrect a
 // watch deleted mid-check, and never clobber user edits (interval/target/pause/type) made meanwhile.
 async function saveChecked(watch) {
   const saved = await updateWatch(watch.id, (fresh) => {
@@ -498,17 +450,8 @@ async function saveChecked(watch) {
   return !!saved;
 }
 
-// Should this check ask the LLM at all? Only when the relevant text (the watched area for an area
-// watch, the whole page otherwise) differs from the hash we last evaluated it against — comparing
-// against a fixed creation-time baseline would mean a page that never gets structured data pays for
-// an LLM call on every single tick forever.
-function forceLlmFor(watch, exResult, areaOk) {
-  if (!areaOk || !exResult.textHash) return false;
-  return watch.selector ? exResult.textHash !== watch.lastAreaHash : exResult.textHash !== watch.lastLlmHash;
-}
-
 // One check per watch at a time. "Check now" (or a report-wrong re-check) landing while the scheduled
-// pass is on the same watch ran it twice concurrently: two tabs, two LLM calls, the same alert twice,
+// pass is on the same watch ran it twice concurrently: two tabs, the same alert twice,
 // and the later save overwriting the earlier one. A second request joins the one in flight.
 const inFlight = new Map();
 function checkWatch(watch) {
@@ -542,11 +485,7 @@ async function runCheck(watch) {
     const viaTab = () => extractViaTab(watch.url, watch.selector, tabOpts)
       .then((r) => { if (r.viaTab) tabOffer = !!r.recipeOffer; return r; })
       .catch((e) => ({ status: 'error', error: e }));
-    // Deterministic before paid: when the static fetch is blocked or lacks a signal this watch needs,
-    // render the page in a tab BEFORE the LLM reads anything. The old order asked the LLM to read the
-    // static text first and opened the tab only if it came back empty — so a store with no JSON-LD
-    // (Amazon) was priced by the LLM on every check, from raw text full of sponsored-item prices,
-    // never by the deterministic page read; and a check that escalated anyway paid for two LLM calls.
+    // When the static fetch is blocked or lacks a signal this watch needs, render the page in a tab.
     // Sticky 'fetch' mode skips this step: the tab has already been shown to add nothing here.
     let triedTab = false;
     const staticLacks = ex.status === 'blocked' || (needPrice && !ex.hasStructuredPrice) || (needAvail && !ex.availability);
@@ -566,11 +505,9 @@ async function runCheck(watch) {
       }
     }
 
-    // A stale area selector must not force LLM diffs of the full page against the area baseline.
-    const areaOk = !watch.selector || !!ex.areaText;
-    let res = await computeFrom(ex, watch, settings, forceLlmFor(watch, ex, areaOk));
+    let res = computeFrom(ex, watch);
 
-    // Still blocked, or still missing a needed signal after the static read + LLM, and the tab hasn't
+    // Still blocked, or still missing a needed signal after the static read, and the tab hasn't
     // been tried this check (sticky 'fetch' mode): give it one more chance. Sticky 'fetch' only meant
     // "don't open a tab when the fetch already yields what's needed" — it must not strand a watch
     // missing, say, availability on a page whose stock is rendered by JS.
@@ -579,8 +516,7 @@ async function runCheck(watch) {
       const ex2 = await viaTab();
       if (ex2.status === 'ok') {
         const wasBlocked = ex.status === 'blocked';
-        const areaOk2 = !watch.selector || !!ex2.areaText;
-        const res2 = await computeFrom(ex2, watch, settings, forceLlmFor(watch, ex2, areaOk2));
+        const res2 = computeFrom(ex2, watch);
         // Adopt the tab only if it supplies a signal THIS watch needs that the static read lacked.
         const tabUseful = (needPrice && res.price == null && res2.price != null)
           || (needAvail && res.availability == null && res2.availability != null)
@@ -600,31 +536,25 @@ async function runCheck(watch) {
       const lacking = (needPrice && res.price == null && availState(res.availability) !== 'out') || (needAvail && res.availability == null);
       watch.recipeOffer = tabOffer && lacking;
     }
+    // An area watch alerts when the region it watches reads differently from the last check. A stale
+    // selector (the area is gone from the page) is an error to show, not a change.
     const areaOkFinal = !watch.selector || !!ex.areaText;
+    const areaChanged = !!(watch.selector && areaOkFinal && ex.textHash && watch.lastAreaHash && ex.textHash !== watch.lastAreaHash);
     if (watch.selector && areaOkFinal && ex.textHash) watch.lastAreaHash = ex.textHash;
-    if (!watch.selector && ex.textHash) watch.lastLlmHash = ex.textHash;
+    if (areaChanged) watch.lastSummary = excerpt(ex.areaText);
+    else if (!watch.selector) watch.lastSummary = null; // left over from the retired Claude fallback
     const change = recordObservation(watch, { t: now, price: res.price, currency: res.currency, availability: res.availability });
-    // Edge-trigger like restock/oos: the LLM re-evaluates newOffer against the fixed creation-time
-    // baseline every time it's asked, so a persistent promo would otherwise re-fire every time the
-    // hash-gate above lets a check through. Only advance this on an actual fresh LLM read
-    // (offerChecked) — a skipped check must not silently forget that the offer was already seen.
-    const newOfferEdge = res.offerChecked && !!res.newOffer && !watch.lastOfferActive;
-    if (res.offerChecked) watch.lastOfferActive = !!res.newOffer;
     watch.lastStatus = (res.price == null && !res.availability) ? 'no_data' : 'ok';
     watch.lastCheckedAt = now;
-    // The summary is the LLM's account of what it read. Keep it only while it still describes the page:
-    // replaced by a fresh LLM read, kept when the LLM was skipped because nothing changed (an unchanged
-    // area, or reuse of its last verdict), dropped once a check is decided without it — the popup showed
-    // "the page is blocked by a CAPTCHA" for weeks under a fresh JSON-LD price.
-    if (res.offerChecked) watch.lastSummary = res.summary || null;
-    else if (!res.reused && !watch.selector) watch.lastSummary = null;
-    watch.lastError = res.llmError || ex.recipeError
+    watch.lastError = ex.recipeError
       || (watch.selector && !areaOkFinal ? 'watched area not found (selector may be stale — re-create the area watch)' : null);
+    // Fields only the retired Claude fallback used.
+    delete watch.lastLlmHash; delete watch.lastOfferActive; delete watch.baselineText;
 
     const saved = await saveChecked(watch);
     // Availability as recorded (carried forward when this check couldn't read it), so a price move on a
     // listing last known to be unpurchasable stays quiet.
-    if (saved) fireNotifications(watch, { change, price: res.price, currency: res.currency, availability: watch.lastAvailability, newOffer: newOfferEdge });
+    if (saved) fireNotifications(watch, { change, price: res.price, currency: res.currency, availability: watch.lastAvailability, areaChanged });
     return watch;
   } catch (e) {
     reportBug(e);
@@ -633,18 +563,24 @@ async function runCheck(watch) {
   }
 }
 
-function fireNotifications(watch, { change, price, currency, availability, newOffer }) {
-  if (!change && !newOffer) return; // nothing actually changed — never repeat alerts (e.g. target-hit) every check
+// The watched area's new text, short enough for a notification and the watch's card.
+function excerpt(text) {
+  const t = String(text || '').trim();
+  return t.length > 140 ? t.slice(0, 139).trimEnd() + '…' : t;
+}
+
+function fireNotifications(watch, { change, price, currency, availability, areaChanged }) {
+  if (!change && !areaChanged) return; // nothing actually changed — never repeat alerts (e.g. target-hit) every check
   const cur = currency || watch.currency || '';
   // A price on something that can't be bought right now isn't actionable — and while a product is
   // unavailable, whatever price got read is the least trustworthy (see computeFrom). Stock alerts still fire.
   const wantsPrice = watch.watchType !== 'availability' && availState(availability) !== 'out';
   const wantsAvail = watch.watchType !== 'price';
   const tgt = watch.targetPrice;
-  if (wantsPrice && tgt != null && price != null && price <= tgt) notify(watch, '🎯 Target price hit', `${watch.title} is ${price} ${cur} (≤ ${tgt}).`);
+  if (change && wantsPrice && tgt != null && price != null && price <= tgt) notify(watch, '🎯 Target price hit', `${watch.title} is ${price} ${cur} (≤ ${tgt}).`);
   else if (wantsAvail && change === 'restock') notify(watch, '📦 Back in stock', `${watch.title} is available again.`);
   else if (wantsPrice && change === 'drop') notify(watch, '⬇️ Price dropped', `${watch.title} is now ${price} ${cur}.`);
-  else if (wantsPrice && newOffer) notify(watch, '🏷️ New offer', `${watch.title}: ${watch.lastSummary || 'a new discount appeared.'}`);
+  else if (areaChanged) notify(watch, '👀 Watched area changed', `${watch.title}: ${watch.lastSummary || 'the area you watch changed.'}`);
 }
 
 function notify(watch, title, message) {

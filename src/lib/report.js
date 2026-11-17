@@ -1,9 +1,9 @@
-// Reports to the developer, sent only when the user chooses to (privacy.html, "Reports you choose to
-// send"). Two kinds, both to the developer's worker (worker/src/index.js, POST /feedback and /errors):
+// Reports to the developer (privacy.html, "Reports to the developer"). Two kinds, both to the
+// developer's worker (worker/src/index.js, POST /feedback and /errors):
 //   - a wrong-result report, one at a time, when the user ticks "send to the developer" (or, without a
 //     recipe worker of their own, presses "Send to the developer"): sendFeedback()
 //   - error reports for bugs in BuyTracker's own code, only while "Send error reports" is on in
-//     Settings (off by default): reportError(), installErrorReporting()
+//     Settings (on for a new install, shown on the welcome page): reportError(), installErrorReporting()
 // No account, no install id, nothing that links one report to another.
 import { getSettings, availState, SERVICE_URL } from './storage.js';
 import { browserAsks, granted, PAGE_DATA, ERRORS } from './consent.js';

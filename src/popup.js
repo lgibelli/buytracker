@@ -70,7 +70,7 @@ function modeBadge(w) {
 // Nothing about the store is sent until the user presses Allow (see recipeServiceFor).
 function offerHtml(host) {
   return `<div class="offer">
-      <p>BuyTracker can't read this store on its own. The free recipe service can work out how, once; after that, checks run in your browser.</p>
+      <p>BuyTracker can't read this store on its own. The free recipe creator can work out how, once; after that, checks run in your browser.</p>
       <div class="offer-row">
         <button class="primary" data-act="offer-allow" type="button">Allow for ${esc(host)}</button>
         <button class="offer-no" data-act="offer-decline" type="button">No thanks</button>
@@ -128,7 +128,7 @@ function card(w, tp, settings) {
           </div>
           <input class="report-price hidden" type="number" step="0.01" inputmode="decimal" placeholder="correct price">
           <input class="report-note" type="text" maxlength="300" placeholder="optional hint: where should it look? (e.g. the price on the right)">
-          ${ask ? `<p class="report-fine">Submitting allows the free recipe service for ${esc(host)}: it gets this page's address (without anything after “?”) and a short extract of it (title, prices, buttons, opening text), to work out the fix. <a href="${PRIVACY}" data-act="link">Details</a></p>` : ''}
+          ${ask ? `<p class="report-fine">Submitting allows the free recipe creator for ${esc(host)}: it gets this page's address (without anything after “?”) and a short extract of it (title, prices, buttons, opening text), to work out the fix. <a href="${PRIVACY}" data-act="link">Details</a></p>` : ''}
           ${canFix ? '<label class="report-send"><input type="checkbox"> Also send this report to the developer</label>' : ''}
           <p class="report-fine">${canFix ? 'If ticked, BuyTracker' : 'BuyTracker'} sends the page address (without anything after “?”), what it read here, and your correction. No account, no ID.</p>
           <div class="report-row">
