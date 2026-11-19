@@ -135,6 +135,44 @@ export function deleteWatch(id) {
   });
 }
 
+// For lib/sync.js, once a pass has put these deletions in sync storage. Re-read inside the lock, so a
+// watch deleted while the pass ran keeps its record.
+export function forgetDeleted(ids) {
+  return serial(async () => {
+    const { syncDeleted = {} } = await chrome.storage.local.get('syncDeleted');
+    for (const id of ids) delete syncDeleted[id];
+    await chrome.storage.local.set({ syncDeleted });
+  });
+}
+
+// Two price histories of the same watch as one step series: in time order, a point only where price
+// or stock changes.
+export function mergeHistory(a, b) {
+  const out = [];
+  for (const p of [...(a || []), ...(b || [])].sort((x, y) => x.t - y.t)) {
+    const q = out[out.length - 1];
+    if (q && q.t === p.t) continue;
+    if (!q || q.price !== p.price || (q.availability || '') !== (p.availability || '')) out.push(p);
+  }
+  return out.slice(-1000);
+}
+
+// A check works on the copy it read when it started, up to ~40 s before it saves. Meanwhile lib/sync.js
+// may have stored points another computer recorded: they are in `fresh` and not in the copy. Keep them.
+// Returns true when this check's own new point is a price and stock another computer recorded during
+// the check: that computer has already alerted on it.
+export function keepFreshPoints(watch, fresh) {
+  const own = new Set((watch.history || []).map((p) => p.t));
+  const extra = (fresh.history || []).filter((p) => !own.has(p.t));
+  if (!extra.length) return false;
+  const mine = watch.history?.[watch.history.length - 1] || null;
+  const isNew = !!mine && mine.t === watch.lastCheckedAt;
+  watch.history = mergeHistory(watch.history, extra);
+  const last = watch.history[watch.history.length - 1];
+  if (last && extra.includes(last)) { watch.lastPrice = last.price ?? null; watch.lastAvailability = last.availability || watch.lastAvailability || null; }
+  return isNew && extra.some((p) => p.price === mine.price && (p.availability || '') === (mine.availability || ''));
+}
+
 // For lib/sync.js: fn(watches) edits the whole map in place and returns true if anything changed, which
 // is then stored. Same lock as the writes above. Stamps nothing: what it applies came stamped.
 export function mutateWatches(fn) {

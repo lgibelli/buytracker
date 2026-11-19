@@ -17,7 +17,9 @@
 //
 // One pass (sync) reads both sides, merges by time stamp and writes only what differs, so it can run
 // whenever either side changes: a pass that finds nothing to do writes nothing to sync storage.
-import { getSettings, mutateWatches, recordObservation, specOf, SPEC_FIELDS, SHARED_SETTINGS } from './storage.js';
+import {
+  getSettings, mutateWatches, forgetDeleted, mergeHistory, recordObservation, specOf, SPEC_FIELDS, SHARED_SETTINGS
+} from './storage.js';
 
 // chrome.storage.sync's limits (the same in Firefox), less a margin for how the browser counts.
 export const QUOTA = { bytes: 102400 - 1024, item: 8192 - 64, items: 512 };
@@ -28,7 +30,9 @@ const utf8 = (s) => new TextEncoder().encode(s).length;
 // What the browser counts an item as: its key plus its value's JSON.
 const itemBytes = (k, v) => utf8(k) + utf8(JSON.stringify(v));
 const lastPoint = (w) => { const h = w.history || []; return h[h.length - 1] || null; };
-const twinKey = (s) => (s.url || '') + '\n' + (s.selector || '');
+// The same watch: same page, same area, same kind. A price watch and a restock watch of one page (the
+// right-click menu makes either) are two watches, never twins.
+const twinKey = (s) => [s.url || '', s.selector || '', s.watchType || 'both'].join('\n');
 const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 const sharedOf = (s) => defined(Object.fromEntries(SHARED_SETTINGS.map((k) => [k, s[k]])));
 
@@ -92,13 +96,7 @@ function takePoint(w, o) {
 
 // Two watches of the same page become one: `keep` gets both histories, as one step series.
 function mergeInto(keep, drop) {
-  const pts = [...(keep.history || []), ...(drop.history || [])].sort((a, b) => a.t - b.t);
-  const out = [];
-  for (const p of pts) {
-    const q = out[out.length - 1];
-    if (!q || q.price !== p.price || (q.availability || '') !== (p.availability || '')) out.push(p);
-  }
-  keep.history = out.slice(-1000);
+  keep.history = mergeHistory(keep.history, drop.history);
   const last = lastPoint(keep);
   if (last) { keep.lastPrice = last.price ?? null; keep.lastAvailability = last.availability || keep.lastAvailability || null; }
   keep.lastCheckedAt = Math.max(keep.lastCheckedAt || 0, drop.lastCheckedAt || 0);
@@ -255,17 +253,21 @@ export async function sync() {
   });
 
   const { out, skipped, bytes, items } = fit(remote, set, remove, createdAt);
-  let error = null;
+  // Tombstones (and settings) first, so a watch's keys never go before its tombstone is up; then the
+  // removals, which free the room fit() counted on; then the rest.
+  let error = null, tombstonesUp = false;
+  const early = Object.fromEntries(Object.entries(out).filter(([k]) => k.startsWith('x:') || k === 'settings'));
+  const late = Object.fromEntries(Object.entries(out).filter(([k]) => !(k in early)));
   try {
-    if (Object.keys(out).length) await sa.set(out);
+    if (Object.keys(early).length) await sa.set(early);
+    tombstonesUp = true;
     if (remove.size) await sa.remove([...remove]);
+    if (Object.keys(late).length) await sa.set(late);
   } catch (e) { error = String(e?.message || e); }
 
-  // Tombstones now in sync storage needn't be kept here any more.
-  if (!error && Object.keys(syncDeleted).length) {
-    const left = Object.fromEntries(Object.entries(syncDeleted).filter(([id]) => out['x:' + id] == null && remote['x:' + id] == null));
-    await chrome.storage.local.set({ syncDeleted: left });
-  }
+  // Deletions whose tombstone is now in sync storage needn't be kept here any more.
+  const up = Object.keys(syncDeleted).filter((id) => (tombstonesUp && early['x:' + id] != null) || remote['x:' + id] != null);
+  if (up.length) await forgetDeleted(up);
 
   const state = {
     at: now, joinedAt: before.joinedAt || (error ? null : now), error,
