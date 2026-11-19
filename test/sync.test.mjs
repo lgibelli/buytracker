@@ -233,6 +233,44 @@ ok(raced && pending.includes('e3') && !pending.includes('e1'), 'the pass forgets
 await sync();
 ok(E.storage.sync.data['x:e3'] && !E.storage.sync.data['w:e3'], 'and the next pass uploads it');
 
+// --- at the 512-item limit, deleting still works (removals go first when tombstones can't fit yet) ---
+const F = computer();
+F.storage.sync = area(true);
+on(F);
+const lots = {};
+for (let i = 0; i < 256; i++) lots['f' + i] = { ...watch('f' + i, 'https://s.example/' + i, { createdAt: T0 + i }), history: [{ t: T0 + i, price: i, availability: 'InStock' }] };
+await F.storage.local.set({ watches: lots });
+st = await sync();
+const items0 = Object.keys(F.storage.sync.data).length;
+ok(!st.error && items0 === 511 && st.localOnly.join() === 'f255', 'items: 255 watches × 2 keys + settings = 511, the 256th stays here', { items0, localOnly: st.localOnly });
+await deleteWatch('f0'); await deleteWatch('f1');
+st = await sync();
+ok(!st.error && F.storage.sync.data['x:f0'] && F.storage.sync.data['x:f1'] && !F.storage.sync.data['w:f0'], 'deleting two at 511 items: tombstones up, keys gone, no MAX_ITEMS error', st);
+ok(F.storage.sync.data['w:f255'] && st.localOnly.length === 0, 'and the watch left out gets in');
+
+// --- one computer, the same page added twice: merged, keeping a target only the younger had ---
+const G = computer();
+G.storage.sync = area(true);
+on(G);
+await G.storage.local.set({ watches: {
+  g1: watch('g1', 'https://shop.example/kettle'),
+  g2: watch('g2', 'https://shop.example/kettle', { createdAt: T0 + H, targetPrice: 80 })
+} });
+await sync(); await sync();
+const wg = await getWatches();
+ok(wg.g1 && !wg.g2 && wg.g1.targetPrice === 80 && G.storage.sync.data['w:g1']?.targetPrice === 80, 'same page twice: one watch, with the target set on the other', wg);
+
+// --- joining: a computer's own settings changed after the shared ones were set are newer, and win ---
+const J = computer();
+J.storage.sync = area(true);
+await J.storage.sync.set({ settings: { defaultIntervalMin: 360, recipeService: true, recipeHosts: ['a.example'], recipeDeclined: [], u: T0 } });
+on(J);
+await J.storage.local.set({ settings: { defaultIntervalMin: 1440, recipeService: false, recipeHosts: ['j.example'], sharedAt: T0 + H } });
+await sync();
+const sj = await getSettings();
+ok(sj.defaultIntervalMin === 1440 && sj.recipeService === false && sj.recipeHosts.includes('a.example') && sj.recipeHosts.includes('j.example')
+  && J.storage.sync.data.settings.defaultIntervalMin === 1440, 'first join: the newer interval and switch win, store lists combine', sj);
+
 // --- a check that saves after sync brought in another computer's point (background.js saveChecked) ---
 const { keepFreshPoints } = storage;
 const NOW = Date.now(), P1 = { t: NOW - 9 * H, price: 100, availability: 'InStock' };
