@@ -199,5 +199,57 @@ ok(!st.error && st.full && st.localOnly.length > 0 && st.localOnly.length < 300,
 ok(used <= 102400 && st.localOnly.includes('d299') && !st.localOnly.includes('d0'), 'the oldest go first, within the 100 KB quota');
 ok(Object.keys(await getWatches()).length === 300, 'none of them is lost locally');
 
+// --- deleting from a full sync area makes room for watches left out (removals before the writes) ---
+on(D);
+for (let i = 0; i < 5; i++) await deleteWatch('d' + i);
+const leftOut = st.localOnly.length;
+st = await sync();
+ok(!st.error && st.localOnly.length < leftOut, `deleting 5 from a full area lets ${leftOut - st.localOnly.length} left-out watches in`, st);
+ok(['d0', 'd1', 'd2', 'd3', 'd4'].every((id) => D.storage.sync.data['x:' + id] && !D.storage.sync.data['w:' + id]), 'and the 5 got tombstones');
+
+// --- a price watch and a restock watch of the same page are two watches, not twins ---
+const E = computer();
+E.storage.sync = area(true);
+on(E);
+await E.storage.local.set({ watches: {
+  e1: watch('e1', 'https://shop.example/bike', { watchType: 'price' }),
+  e2: watch('e2', 'https://shop.example/bike', { watchType: 'availability', createdAt: T0 + H })
+} });
+await sync(); await sync();
+const we = await getWatches();
+ok(we.e1?.watchType === 'price' && we.e2?.watchType === 'availability' && !E.storage.sync.data['x:e2'], 'price and restock watches of one page both survive');
+
+// --- a watch deleted while a pass is running keeps its deletion record ---
+await putWatch(watch('e3', 'https://shop.example/bell'));
+await sync();
+await deleteWatch('e1');
+const realSet = E.storage.sync.set;
+let raced = false;
+E.storage.sync.set = async (items) => { if (!raced) { raced = true; await deleteWatch('e3'); } return realSet(items); };
+await sync();
+E.storage.sync.set = realSet;
+const pending = Object.keys((await E.storage.local.get('syncDeleted')).syncDeleted || {});
+ok(raced && pending.includes('e3') && !pending.includes('e1'), 'the pass forgets only the deletion it uploaded (e1), not one made meanwhile (e3)', pending);
+await sync();
+ok(E.storage.sync.data['x:e3'] && !E.storage.sync.data['w:e3'], 'and the next pass uploads it');
+
+// --- a check that saves after sync brought in another computer's point (background.js saveChecked) ---
+const { keepFreshPoints } = storage;
+const NOW = Date.now(), P1 = { t: NOW - 9 * H, price: 100, availability: 'InStock' };
+const checked = (price) => ({ history: [P1, { t: NOW, price, availability: 'InStock' }], lastCheckedAt: NOW, lastPrice: price, lastAvailability: 'InStock' });
+for (const [label, tA] of [['before', NOW - 20_000], ['after', NOW + 20_000]]) {
+  const w = checked(70);
+  const sup = keepFreshPoints(w, { history: [P1, { t: tA, price: 70, availability: 'InStock' }] });
+  ok(sup && w.history.length === 2 && w.lastPrice === 70, `same 70 € recorded elsewhere ${label} this check began: kept once, and this check doesn't alert`, w.history);
+}
+let w5 = checked(70);
+let sup5 = keepFreshPoints(w5, { history: [P1, { t: NOW - 20_000, price: 75, availability: 'InStock' }] });
+ok(!sup5 && w5.history.map((p) => p.price).join() === '100,75,70' && w5.lastPrice === 70, 'a different price recorded elsewhere is kept in order; this check\'s 70 € still alerts');
+w5 = checked(70);
+sup5 = keepFreshPoints(w5, { history: [P1, { t: NOW + 20_000, price: 75, availability: 'InStock' }] });
+ok(!sup5 && w5.lastPrice === 75, 'a newer point from elsewhere becomes the current price');
+w5 = checked(70);
+ok(!keepFreshPoints(w5, { history: [P1] }) && w5.history.length === 2, 'nothing new elsewhere: the check saves as before');
+
 console.log(fails ? `--- SYNC TEST: ${fails} FAILURE(S) ---` : '--- SYNC TEST: ALL PASS ---');
 process.exitCode = fails ? 1 : 0;

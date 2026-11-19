@@ -83,16 +83,16 @@ renders popup/options, checks DOM extraction against saved page mirrors in `test
 unavailable amazon.pl listing must yield no price and OutOfStock — and runs a real end-to-end
 add-watch + re-check against a live product page):
 
+```bash
+mkdir -p /tmp/bt-test && cd /tmp/bt-test && npm i playwright   # once
+node /path/to/buytracker/test/smoke.js
+```
+
 Sync between computers, in plain Node (no browser, no deps): two fake browsers share one sync area that
 enforces Chrome's quotas.
 
 ```bash
 node test/sync.test.mjs
-```
-
-```bash
-mkdir -p /tmp/bt-test && cd /tmp/bt-test && npm i playwright   # once
-node /path/to/buytracker/test/smoke.js
 ```
 
 ## How it works

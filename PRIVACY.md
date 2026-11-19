@@ -3,9 +3,11 @@
 _Last updated: 2026-11-19_
 
 BuyTracker has no accounts, analytics or ads. It sends nothing about the pages you watch
-unless you choose to, as described under [Free recipe creator](#free-recipe-creator-store-by-store)
+to the developer unless you choose to, as described under [Free recipe creator](#free-recipe-creator-store-by-store)
 and [Reports to the developer](#reports-to-the-developer). It sends anonymous error reports
-about bugs in its own code, which you can turn off.
+about bugs in its own code, which you can turn off. Unless you turn sync off in Settings, your
+browser's own sync copies your watch list (not its price history) to your other computers, as
+described under [Sync between your computers](#sync-between-your-computers).
 
 ## What the extension stores
 

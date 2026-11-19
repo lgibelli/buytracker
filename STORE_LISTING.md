@@ -32,7 +32,7 @@ FEATURES
 
 PRIVACY
 • No account, no sign-up, no tracking.
-• Your watches, history, and settings stay in your browser.
+• Your watches, history, and settings stay in your browser. With sync on (the default, can be turned off in Settings), your browser's own sync also copies the watch list, not the history, to your other computers signed in to the same Google or Firefox account; it never reaches us.
 • Nothing about the pages you watch is sent to us unless you choose to: a store you allow for the recipe creator (its page address and a short extract of the product page, never anything about you), or a wrong-result report you send from a watch.
 • Anonymous error reports about bugs in BuyTracker's own code (no web addresses, no page text) help fix it. They are on by default; turn them off on the welcome page or in Settings.
 • Everything sent is anonymous: no account, no ID.

@@ -4,7 +4,7 @@ import { pickArea } from './lib/picker.js';
 import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitizeRecipe, recipeServiceFor, recipeOfferFor } from './lib/recipe.js';
 import {
   getSettings, setSettings, dropRetiredSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice,
-  SERVICE_URL, SPEC_FIELDS
+  SERVICE_URL, SPEC_FIELDS, keepFreshPoints
 } from './lib/storage.js';
 import { syncSoon, syncRelevant } from './lib/sync.js';
 import { installErrorReporting, reportError, isBug, sendFeedback } from './lib/report.js';
@@ -455,13 +455,18 @@ async function contextAdd(info, tab, watchType) {
 // A check can take ~40s (a background tab). Re-read the watch at write time so we never resurrect a
 // watch deleted mid-check, and never clobber what the user set up (interval/target/pause/type), here
 // or on another computer (lib/sync.js), meanwhile.
+// Points another computer recorded meanwhile are kept too (storage.js keepFreshPoints). Resolves to null
+// when the watch is gone, else { superseded }: true when another computer recorded this check's new price
+// and stock during the check, and so has already alerted on it.
 async function saveChecked(watch) {
+  let superseded = false;
   const saved = await updateWatch(watch.id, (fresh) => {
     if (!fresh) return null;
     for (const k of [...SPEC_FIELDS, 'specAt']) watch[k] = fresh[k];
+    superseded = keepFreshPoints(watch, fresh);
     return watch;
   });
-  return !!saved;
+  return saved ? { superseded } : null;
 }
 
 // One check per watch at a time. "Check now" (or a report-wrong re-check) landing while the scheduled
@@ -568,7 +573,7 @@ async function runCheck(watch) {
     const saved = await saveChecked(watch);
     // Availability as recorded (carried forward when this check couldn't read it), so a price move on a
     // listing last known to be unpurchasable stays quiet.
-    if (saved) fireNotifications(watch, { change, price: res.price, currency: res.currency, availability: watch.lastAvailability, areaChanged });
+    if (saved && !saved.superseded) fireNotifications(watch, { change, price: res.price, currency: res.currency, availability: watch.lastAvailability, areaChanged });
     return watch;
   } catch (e) {
     reportBug(e);
@@ -631,8 +636,11 @@ function checkDue(force = false) {
 async function checkPass(force) {
   const watches = await getWatches();
   const now = Date.now();
-  for (const w of Object.values(watches)) {
-    if (w.paused) continue;
+  for (const listed of Object.values(watches)) {
+    // A pass can run for many minutes: check each watch as stored now, with whatever another computer
+    // has synced since the pass began (a price it already alerted on is then no change here).
+    const w = await getWatch(listed.id);
+    if (!w || w.paused) continue;
     if (force || now - (w.lastCheckedAt || 0) >= (w.intervalMin || 360) * 60000) {
       try { await checkWatch(w); } catch (e) { console.warn('check', w.id, e); reportBug(e); }
     }
