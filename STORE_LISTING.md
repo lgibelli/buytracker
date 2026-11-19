@@ -87,7 +87,7 @@ Monitor product web pages the user chooses and notify them when the price, avail
 | `scripting` | To read the real rendered price/availability and to let the user click a specific region of a page to watch, the extension injects a small content script into the product page the user is tracking. |
 | `tabs` | Some product pages only show price/stock after JavaScript runs, so the extension opens the page in a background tab to read the rendered value. It also opens the product page when the user clicks an alert notification. |
 | `activeTab` | When the user clicks "Watch this page" or "Watch area" in the popup, the extension acts on the user's current tab to capture that product. |
-| `storage` / `unlimitedStorage` | Stores the user's watches, settings, and per-item price history locally. `unlimitedStorage` is needed because price history accumulates over time for many tracked items. |
+| `storage` / `unlimitedStorage` | Stores the user's watches, settings, and per-item price history locally. `unlimitedStorage` is needed because price history accumulates over time for many tracked items. The watch list itself (no history) is also kept in `chrome.storage.sync`, so Chrome sync carries it to the user's other computers; the user can turn that off in Settings. |
 | `alarms` | Schedules periodic background re-checks of the user's watched pages on the interval they set. |
 | `notifications` | Sends the user a desktop alert when a watched item drops in price, hits their target, comes back in stock, or when an area the user watches changes. |
 | `contextMenus` | Adds right-click menu items so the user can start watching a page or link for price or availability changes. |

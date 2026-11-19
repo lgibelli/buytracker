@@ -53,11 +53,26 @@ async function load() {
   $('workerUrl').value = s.workerUrl || '';
   $('workerToken').value = s.workerToken || '';
   $('recipeService').checked = s.recipeService !== false;
+  $('syncWatches').checked = s.syncWatches !== false;
+  renderSync();
   // In Firefox the switch is Firefox's own permission for error reports (also offered while installing).
   $('sendErrorReports').checked = browserAsks() ? await granted(ERRORS) : !!s.sendErrorReports;
   // The experimental section stays collapsed even when it's in use; its summary says so instead.
   showWorkerInUse(s.workerUrl);
   renderHosts();
+}
+
+// What the last sync pass did (lib/sync.js keeps it in syncState).
+async function renderSync() {
+  const el = $('syncStatus');
+  const [{ syncWatches }, { syncState: st }] = await Promise.all([getSettings(), chrome.storage.local.get('syncState')]);
+  if (syncWatches === false) return chip(el, '', 'off on this computer');
+  if (!st?.at) return chip(el, '', 'not synced yet');
+  if (st.error) return chip(el, 'err', 'couldn’t sync: ' + st.error);
+  const n = st.shared || 0;
+  const kb = st.bytes != null ? ` · ${Math.ceil(st.bytes / 1024)} KB of 100 KB used` : '';
+  if (st.full) return chip(el, 'warn', `${n} watch${n === 1 ? '' : 'es'} shared · sync space is full, so ${st.localOnly.length} stay${st.localOnly.length === 1 ? 's' : ''} on this computer only`);
+  chip(el, 'ok', `${n} watch${n === 1 ? '' : 'es'} shared${kb}`);
 }
 
 function showWorkerInUse(url) {
@@ -82,8 +97,10 @@ $('save').addEventListener('click', async () => {
     workerUrl,
     workerToken: $('workerToken').value.trim(),
     recipeService: $('recipeService').checked,
+    syncWatches: $('syncWatches').checked,
     sendErrorReports: $('sendErrorReports').checked
   });
+  renderSync();
   showWorkerInUse(workerUrl);
   if (consent && !(await consent)) {
     statusEl.textContent = 'Saved, but Firefox didn’t allow sending page data, so your own worker stays off.';
@@ -133,6 +150,7 @@ async function maybeTour() {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.ui?.newValue?.settingsTour) maybeTour();
+  if (area === 'local' && changes.syncState) renderSync();
 });
 
 load().then(maybeTour);

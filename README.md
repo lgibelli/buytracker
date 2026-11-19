@@ -68,6 +68,13 @@ manifest. Listing notes are in `STORE_LISTING.md`. The add-on id (`buytracker@sa
 - Browse to a product page → click the toolbar icon → **+ Watch this page**.
 - The popup lists each watch with its current price, change vs. last, a price-history chart, status, interval, and a target-price field.
 - **check now** forces a re-check; **↻** checks everything that’s due.
+- **Sync between computers** (Settings, on by default): the watch list follows you to your other
+  computers through the browser's own sync storage — Chrome with your Google account and sync on,
+  Firefox with your Firefox account. What's shared is each watch's setup (page, title, target, interval,
+  pause) and its last price/stock point; every computer checks on its own and keeps its own history.
+  A computer that receives another's last point takes it as its own, so a drop alerted on one isn't
+  alerted again by the next. Sync storage holds 100 KB, about 150–200 watches; past that the newest
+  stay on their computer, and their cards say so. Chrome and Firefox don't sync with each other.
 
 ## Testing
 
@@ -75,6 +82,13 @@ Automated smoke test (headless Chromium loads the unpacked extension, boots the 
 renders popup/options, checks DOM extraction against saved page mirrors in `test/fixtures/` — e.g. an
 unavailable amazon.pl listing must yield no price and OutOfStock — and runs a real end-to-end
 add-watch + re-check against a live product page):
+
+Sync between computers, in plain Node (no browser, no deps): two fake browsers share one sync area that
+enforces Chrome's quotas.
+
+```bash
+node test/sync.test.mjs
+```
 
 ```bash
 mkdir -p /tmp/bt-test && cd /tmp/bt-test && npm i playwright   # once
@@ -111,9 +125,10 @@ Every N hours  ─► background.js acquires (cheapest reliable signal first):
 | `scripts/build-firefox.js` | Builds the Firefox package from the same source |
 | `worker/` | The recipe service (Cloudflare Worker + Workers AI, KV, D1) and report intake |
 | `src/lib/storage.js` | chrome.storage wrappers + append-on-change history logic |
+| `src/lib/sync.js` | Sync between computers: merges the watch list with `chrome.storage.sync` |
 | `src/lib/chart.js` | Dependency-free SVG step chart |
 | `src/popup.*` | Watchlist UI with inline charts |
-| `src/options.*` | Settings: free recipe creator, check interval, error reports, own worker (experimental) |
+| `src/options.*` | Settings: free recipe creator, check interval, sync, error reports, own worker (experimental) |
 
 ## Notes & limitations
 

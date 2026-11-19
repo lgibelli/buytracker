@@ -1,6 +1,6 @@
 # BuyTracker — Privacy Policy
 
-_Last updated: 2026-11-17_
+_Last updated: 2026-11-19_
 
 BuyTracker has no accounts, analytics or ads. It sends nothing about the pages you watch
 unless you choose to, as described under [Free recipe creator](#free-recipe-creator-store-by-store)
@@ -12,6 +12,18 @@ about bugs in its own code, which you can turn off.
 Your list of watched pages, their price history, and your settings are stored
 locally in your browser's own extension storage. They never leave your device
 except as described below.
+
+### Sync between your computers
+
+With "Sync between computers" on in Settings (it is on unless you turn it off), BuyTracker
+also keeps a copy of your watch list in your browser's sync storage: each watch's page
+address, title, target price, check interval, whether it's paused, and its last price and
+stock, plus the recipe creator switch, the stores you allowed or declined for it, and the
+check interval for new watches. Your browser carries that copy to your other computers
+signed in to the same account: Chrome through your Google account when Chrome sync is on,
+Firefox through your Firefox account. Google or Mozilla handle it under their own privacy
+policies. It never goes to the developer. Price history, the address and token of your own
+recipe worker, and the error-report setting stay on each computer.
 
 ## Free recipe creator, store by store
 
