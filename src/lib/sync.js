@@ -134,6 +134,17 @@ function fit(remote, set, remove, createdAt) {
   return { out, skipped, bytes, items };
 }
 
+// Whether the area takes `items` with nothing removed yet.
+function fitsBeforeRemoval(remote, items) {
+  let bytes = 0, n = 0;
+  for (const [k, v] of Object.entries(remote)) { bytes += itemBytes(k, v); n++; }
+  for (const [k, v] of Object.entries(items)) {
+    bytes += itemBytes(k, v) - (k in remote ? itemBytes(k, remote[k]) : 0);
+    if (!(k in remote)) n++;
+  }
+  return bytes <= QUOTA.bytes && n <= QUOTA.items;
+}
+
 export async function sync() {
   const sa = syncArea();
   const settings = await getSettings();
@@ -184,9 +195,11 @@ export async function sync() {
   // runs before its browser has downloaded anything must not override the settings already shared.
   if (!rs) set.settings = { ...sharedOf(settings), u: settings.sharedAt || 0 };
   else if (!joined) {
+    // Newer side wins, as always, for the switch and the interval; the store lists are combined.
+    const base = (settings.sharedAt || 0) > (rs.u || 0) ? settings : rs;
     const hosts = [...new Set([...(rs.recipeHosts || []), ...(settings.recipeHosts || [])])];
     const declined = [...new Set([...(rs.recipeDeclined || []), ...(settings.recipeDeclined || [])])].filter((h) => !hosts.includes(h));
-    const merged = { ...sharedOf(rs), recipeHosts: hosts, recipeDeclined: declined };
+    const merged = { ...sharedOf(base), recipeHosts: hosts, recipeDeclined: declined };
     localSettings = { ...merged, sharedAt: now };
     set.settings = { ...merged, u: now };
   } else if ((rs.u || 0) > (settings.sharedAt || 0)) localSettings = { ...sharedOf(rs), sharedAt: rs.u };
@@ -196,7 +209,7 @@ export async function sync() {
     await chrome.storage.local.set({ settings: { ...stored, ...localSettings } });
   }
 
-  const createdAt = {};
+  const createdAt = {}, keptTarget = {};
   let added = 0;
   await mutateWatches((ws) => {
     let changed = false;
@@ -207,11 +220,12 @@ export async function sync() {
       if (into && specs[into]) {
         if (ws[into]) mergeInto(ws[into], ws[id]);
         else ws[into] = { ...ws[id], id: into, createdAt: specs[into].createdAt };
+        if (ws[id].targetPrice != null) keptTarget[into] = ws[id].targetPrice;
       }
       delete ws[id]; changed = true;
     }
     // 2. A watch never shared from here, of a page another computer shares: it's that watch.
-    const byTwin = {}, keptTarget = {};
+    const byTwin = {};
     for (const [id, s] of Object.entries(specs)) byTwin[twinKey(s)] = id;
     for (const w of Object.values(ws)) {
       const sid = byTwin[twinKey(w)];
@@ -231,8 +245,12 @@ export async function sync() {
         w.specAt = s.u;
         changed = true;
       }
-      // The shared setup wins, but a target price set here on the same page, where it has none, stays.
-      if (keptTarget[id] != null && w.targetPrice == null) { w.targetPrice = keptTarget[id]; w.specAt = now; changed = true; }
+      // The shared setup wins, but a target price set on a merged twin, where it has none, stays.
+      if (keptTarget[id] != null && w.targetPrice == null) {
+        w.targetPrice = keptTarget[id];
+        w.specAt = Math.max(now, (s.u || 0) + 1); // newer than the shared setup, so it goes up
+        changed = true;
+      }
       for (const p of [o, ...(carried[id] || [])].filter(Boolean).sort((a, b) => a.t - b.t)) {
         if (p.t <= (lastPoint(w)?.t || 0)) continue;
         const was = JSON.stringify(w);
@@ -254,14 +272,18 @@ export async function sync() {
 
   const { out, skipped, bytes, items } = fit(remote, set, remove, createdAt);
   // Tombstones (and settings) first, so a watch's keys never go before its tombstone is up; then the
-  // removals, which free the room fit() counted on; then the rest.
+  // removals, which free the room fit() counted on; then the rest. When the area is too full to take
+  // the tombstones before anything is removed, remove first: the deletions stay recorded here until
+  // their tombstones are up, so nothing comes back on this computer meanwhile.
   let error = null, tombstonesUp = false;
   const early = Object.fromEntries(Object.entries(out).filter(([k]) => k.startsWith('x:') || k === 'settings'));
   const late = Object.fromEntries(Object.entries(out).filter(([k]) => !(k in early)));
+  const removeFirst = !fitsBeforeRemoval(remote, early);
   try {
+    if (removeFirst && remove.size) await sa.remove([...remove]);
     if (Object.keys(early).length) await sa.set(early);
     tombstonesUp = true;
-    if (remove.size) await sa.remove([...remove]);
+    if (!removeFirst && remove.size) await sa.remove([...remove]);
     if (Object.keys(late).length) await sa.set(late);
   } catch (e) { error = String(e?.message || e); }
 

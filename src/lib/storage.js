@@ -94,11 +94,14 @@ export async function getWatch(id) {
 // Every watch lives in ONE `watches` map and chrome.storage has no transactions, so each write is a
 // read-modify-write of the whole map. Two that overlap — a "check now" finishing while the scheduled
 // pass saves another watch — let the later one write back a map read before the earlier one landed,
-// silently undoing that check. Writes are serialised per JS context (the service worker does nearly
-// all of them); updateWatch also re-reads the watch inside the lock, so a caller never writes back a
-// copy that went stale while it was busy.
+// silently undoing that check. So writes take a lock; updateWatch also re-reads the watch inside it, so
+// a caller never writes back a copy that went stale while it was busy. The popup writes too, from its
+// own JS context, and so does sync (lib/sync.js), so the lock is a Web Lock: one for every context of
+// the extension, granted in the order asked. None of the functions run under it takes it again. The
+// promise chain stands in where Web Locks are missing.
 let writeChain = Promise.resolve();
 function serial(fn) {
+  if (globalThis.navigator?.locks?.request) return navigator.locks.request('buytracker-storage', () => fn());
   const run = writeChain.then(fn, fn);
   writeChain = run.catch(() => {});
   return run;
