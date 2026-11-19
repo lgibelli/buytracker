@@ -19,8 +19,30 @@ const DEFAULT_SETTINGS = {
   // Send reports of bugs in BuyTracker's own code to the developer (src/lib/report.js). A fresh install
   // turns this on (background.js onInstalled, disclosed on the welcome page); installs from before it
   // did keep what they had.
-  sendErrorReports: false
+  sendErrorReports: false,
+  // Share the watch list (and SHARED_SETTINGS) through the browser's own sync — the Google account in
+  // Chrome, the Firefox account in Firefox — with this browser's other installs (lib/sync.js). This
+  // switch itself is per computer.
+  syncWatches: true
 };
+
+// The settings that follow the watch list to the user's other computers. Changing one stamps
+// `sharedAt`, so lib/sync.js can tell which side changed last. Everything else stays on this computer:
+// the user's own worker and its token, error reports, the sync switch.
+export const SHARED_SETTINGS = ['defaultIntervalMin', 'recipeService', 'recipeHosts', 'recipeDeclined'];
+
+// What the user set a watch up as. This part is shared between computers (lib/sync.js); the rest of a
+// watch (history, fetch mode, last check and status) is what each computer's own checks found.
+// Changing any of it stamps `specAt`.
+export const SPEC_FIELDS = ['url', 'title', 'createdAt', 'watchType', 'intervalMin', 'targetPrice', 'selector', 'paused'];
+
+export function specOf(w) {
+  const s = {};
+  for (const k of SPEC_FIELDS) if (w[k] != null && w[k] !== false) s[k] = w[k];
+  return s;
+}
+
+const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // Settings of the direct Claude API fallback, removed in 0.1.17. Dropped from storage on update so an
 // Anthropic key the extension no longer uses doesn't stay behind in it.
@@ -41,6 +63,7 @@ export async function getSettings() {
 export async function setSettings(patch) {
   const cur = await getSettings();
   const next = { ...cur, ...patch };
+  if (SHARED_SETTINGS.some((k) => !sameJson(cur[k], next[k]))) next.sharedAt = Date.now();
   await chrome.storage.local.set({ settings: next });
   return next;
 }
@@ -85,8 +108,11 @@ function serial(fn) {
 export function updateWatch(id, mutate) {
   return serial(async () => {
     const watches = await getWatches();
-    const next = mutate(watches[id] || null);
+    const prev = watches[id] || null;
+    const next = mutate(prev);
     if (!next) return null;
+    // A new watch, or one the user re-set-up here: stamp when, unless the caller already did.
+    if (!prev ? !next.specAt : (next.specAt === prev.specAt && !sameJson(specOf(prev), specOf(next)))) next.specAt = Date.now();
     watches[id] = next;
     await chrome.storage.local.set({ watches });
     return next;
@@ -97,11 +123,26 @@ export function putWatch(watch) {
   return updateWatch(watch.id, () => watch);
 }
 
+// The deletion is recorded in `syncDeleted` in the same write, so lib/sync.js can tell the user's other
+// computers (a watch merely missing from this one could also be one that hasn't arrived yet). Not while
+// sync is off here: turning it back on brings such a watch back rather than deleting it everywhere.
 export function deleteWatch(id) {
   return serial(async () => {
-    const watches = await getWatches();
+    const { watches = {}, syncDeleted = {}, settings } = await chrome.storage.local.get(['watches', 'syncDeleted', 'settings']);
     delete watches[id];
-    await chrome.storage.local.set({ watches });
+    if (settings?.syncWatches !== false) syncDeleted[id] = Date.now();
+    await chrome.storage.local.set({ watches, syncDeleted });
+  });
+}
+
+// For lib/sync.js: fn(watches) edits the whole map in place and returns true if anything changed, which
+// is then stored. Same lock as the writes above. Stamps nothing: what it applies came stamped.
+export function mutateWatches(fn) {
+  return serial(async () => {
+    const watches = await getWatches();
+    const changed = await fn(watches);
+    if (changed) await chrome.storage.local.set({ watches });
+    return changed;
   });
 }
 

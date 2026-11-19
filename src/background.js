@@ -3,8 +3,10 @@ import { capturePage } from './lib/capture.js';
 import { pickArea } from './lib/picker.js';
 import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitizeRecipe, recipeServiceFor, recipeOfferFor } from './lib/recipe.js';
 import {
-  getSettings, setSettings, dropRetiredSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice, SERVICE_URL
+  getSettings, setSettings, dropRetiredSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice,
+  SERVICE_URL, SPEC_FIELDS
 } from './lib/storage.js';
+import { syncSoon, syncRelevant } from './lib/sync.js';
 import { installErrorReporting, reportError, isBug, sendFeedback } from './lib/report.js';
 import { sendable } from './lib/consent.js';
 
@@ -33,9 +35,20 @@ chrome.runtime.onInstalled.addListener((details) => {
       .finally(() => chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome.html') }));
   }
   if (details.reason === 'update') dropRetiredSettings().catch((e) => console.warn('settings cleanup', e));
+  syncSoon();
 });
-chrome.runtime.onStartup.addListener(() => { chrome.alarms.create('tick', { periodInMinutes: TICK_MIN }); setupMenus(); });
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'tick') checkDue().catch((e) => { console.warn('tick', e); reportBug(e); }); });
+chrome.runtime.onStartup.addListener(() => { chrome.alarms.create('tick', { periodInMinutes: TICK_MIN }); setupMenus(); syncSoon(); });
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name !== 'tick') return;
+  syncSoon(); // also heals a change an earlier pass couldn't write (e.g. the sync rate limit)
+  checkDue().catch((e) => { console.warn('tick', e); reportBug(e); });
+});
+
+// The user's other computers changed the shared watch list, or this one did (from here or the popup):
+// bring the two in line (lib/sync.js). Registered at the top level so a change wakes the worker.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' || (area === 'local' && syncRelevant(changes))) syncSoon();
+});
 
 chrome.notifications.onClicked.addListener(async (id) => {
   const [tag, wid] = id.split('|');
@@ -440,11 +453,12 @@ async function contextAdd(info, tab, watchType) {
 // --- checking ---
 
 // A check can take ~40s (a background tab). Re-read the watch at write time so we never resurrect a
-// watch deleted mid-check, and never clobber user edits (interval/target/pause/type) made meanwhile.
+// watch deleted mid-check, and never clobber what the user set up (interval/target/pause/type), here
+// or on another computer (lib/sync.js), meanwhile.
 async function saveChecked(watch) {
   const saved = await updateWatch(watch.id, (fresh) => {
     if (!fresh) return null;
-    for (const k of ['intervalMin', 'targetPrice', 'paused', 'watchType']) watch[k] = fresh[k];
+    for (const k of [...SPEC_FIELDS, 'specAt']) watch[k] = fresh[k];
     return watch;
   });
   return !!saved;

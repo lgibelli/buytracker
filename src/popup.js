@@ -84,7 +84,8 @@ function offerHtml(host) {
 // `canFix`: a report can re-derive this store's recipe (the free service is on, or the user runs their
 // own worker); without that it can only go to the developer. `ask`: submitting also allows the free
 // service for this store, so the form says so.
-function card(w, tp, settings) {
+// `localOnly`: the watch isn't synced to the user's other computers, because sync storage is full (lib/sync.js).
+function card(w, tp, settings, localOnly) {
   const host = recipeHost(w.url);
   const canFix = !!settings.workerUrl || settings.recipeService !== false;
   const ask = canFix && !recipeServiceFor(settings, w.url, SERVICE_URL);
@@ -110,6 +111,7 @@ function card(w, tp, settings) {
         ${availBadge(w)}
         ${modeBadge(w)}
         ${w.selector ? '<span class="badge" title="Semantic area watch">area</span>' : ''}
+        ${localOnly ? '<span class="badge no_data" title="Sync space is full, so this watch isn’t on your other computers. Deleting watches you no longer need makes room.">this computer only</span>' : ''}
         <span>checks every</span>
         <select data-act="interval">${opts}</select>
         <label>≤ <input class="target" type="number" step="0.01" placeholder="target" value="${esc(w.targetPrice ?? '')}" data-act="target"></label>
@@ -144,7 +146,8 @@ function card(w, tp, settings) {
 
 async function render() {
   // As the checks see them: in Firefox, stores allowed before it was asked show their offer again.
-  const [watches, settings, ui] = await Promise.all([getWatches(), getSettings().then(sendable), getUi()]);
+  const [watches, settings, ui, { syncState }] = await Promise.all([getWatches(), getSettings().then(sendable), getUi(), chrome.storage.local.get('syncState')]);
+  const localOnly = new Set(settings.syncWatches !== false ? syncState?.localOnly || [] : []);
   const arr = Object.values(watches).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   emptyEl.classList.toggle('hidden', arr.length > 0);
   // Sibling listings (e.g. the 256 GB and 512 GB of one product) get the words that tell them apart
@@ -152,7 +155,7 @@ async function render() {
   const parts = titleParts(arr.map((w) => w.title || w.url));
   // Every value card() puts in this HTML goes through esc(), or is a number the extension computed;
   // the chart filters the page-supplied currency itself (chart.js). MV3's page CSP blocks inline script.
-  listEl.innerHTML = arr.map((w, i) => card(w, parts[i], settings)).join('');
+  listEl.innerHTML = arr.map((w, i) => card(w, parts[i], settings, localOnly.has(w.id))).join('');
   maybeShowTour(ui);
 }
 
