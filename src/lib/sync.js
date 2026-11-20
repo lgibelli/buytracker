@@ -24,6 +24,8 @@ import {
 // chrome.storage.sync's limits (the same in Firefox), less a margin for how the browser counts.
 export const QUOTA = { bytes: 102400 - 1024, item: 8192 - 64, items: 512 };
 const TOMBSTONE_MS = 90 * 86_400_000;
+// Set up on a twin that is merged away, and kept when the watch it merges into has none.
+const KEPT = ['targetPrice', 'group'];
 
 const syncArea = () => globalThis.chrome?.storage?.sync || null;
 const utf8 = (s) => new TextEncoder().encode(s).length;
@@ -79,6 +81,7 @@ function fromShared(id, s, o) {
   const w = {
     id, url: s.url, title: s.title || s.url, createdAt: s.createdAt || Date.now(), watchType: s.watchType || 'both',
     intervalMin: s.intervalMin || 360, targetPrice: s.targetPrice ?? null, selector: s.selector || null, paused: !!s.paused,
+    group: s.group || null,
     specAt: s.u || 0, currency: o?.c || null,
     // An area watch needs the rendered page (as when it's picked); the area's text is learned at its
     // first check here, which alerts on nothing.
@@ -209,7 +212,9 @@ export async function sync() {
     await chrome.storage.local.set({ settings: { ...stored, ...localSettings } });
   }
 
-  const createdAt = {}, keptTarget = {};
+  // What a merged twin had set where the watch it merges into has nothing: kept (see step 3).
+  const createdAt = {}, kept = {};
+  const keep = (into, w) => { for (const k of KEPT) if (w[k] != null) (kept[into] ||= {})[k] = w[k]; };
   let added = 0;
   await mutateWatches((ws) => {
     let changed = false;
@@ -220,7 +225,7 @@ export async function sync() {
       if (into && specs[into]) {
         if (ws[into]) mergeInto(ws[into], ws[id]);
         else ws[into] = { ...ws[id], id: into, createdAt: specs[into].createdAt };
-        if (ws[id].targetPrice != null) keptTarget[into] = ws[id].targetPrice;
+        keep(into, ws[id]);
       }
       delete ws[id]; changed = true;
     }
@@ -232,7 +237,7 @@ export async function sync() {
       if (specs[w.id] || !sid || sid === w.id) continue;
       if (ws[sid]) mergeInto(ws[sid], w);
       else ws[sid] = { ...w, id: sid, createdAt: specs[sid].createdAt };
-      if (w.targetPrice != null) keptTarget[sid] = w.targetPrice;
+      keep(sid, w);
       delete ws[w.id]; changed = true;
     }
     // 3. Shared watches: add those this computer lacks; take a newer setup and a newer point.
@@ -245,9 +250,11 @@ export async function sync() {
         w.specAt = s.u;
         changed = true;
       }
-      // The shared setup wins, but a target price set on a merged twin, where it has none, stays.
-      if (keptTarget[id] != null && w.targetPrice == null) {
-        w.targetPrice = keptTarget[id];
+      // The shared setup wins, but a target price or product group set on a merged twin, where it has
+      // none, stays.
+      let took = false;
+      for (const k of KEPT) if (kept[id]?.[k] != null && w[k] == null) { w[k] = kept[id][k]; took = true; }
+      if (took) {
         w.specAt = Math.max(now, (s.u || 0) + 1); // newer than the shared setup, so it goes up
         changed = true;
       }

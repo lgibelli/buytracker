@@ -1,7 +1,8 @@
 import { getWatches, updateWatch, deleteWatch, getSettings, setSettings, getUi, setUi, availState, SERVICE_URL } from './lib/storage.js';
 import { recipeHost, recipeServiceFor, recipeOfferFor } from './lib/recipe.js';
 import { priceChartSVG } from './lib/chart.js';
-import { titleParts } from './lib/titles.js';
+import { titleParts, storeless } from './lib/titles.js';
+import { groupsOf, cheapest, groupable, joinGroup, leaveGroup, notSame, suggestedMatch } from './lib/groups.js';
 import { installErrorReporting } from './lib/report.js';
 import { ask, sendable, PAGE_DATA } from './lib/consent.js';
 import { startTour } from './lib/tour.js';
@@ -24,9 +25,16 @@ function ago(t) {
   const d = Math.floor(h / 24); return `${d}d ago`;
 }
 
-// Which cards are expanded — kept in memory so a re-render (e.g. after "check now")
+// Which cards and product groups are expanded — kept in memory so a re-render (e.g. after "check now")
 // doesn't re-collapse what the user opened. Resets to all-collapsed when the popup reopens.
 const expanded = new Set();
+const expandedGroups = new Set();
+
+const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20.5 20.5l-4.6-4.6"/></svg>';
+const nameOf = (w) => storeless(w.title || w.url, w.url);
+const storeOf = (w) => recipeHost(w.url) || w.url;
+// A group's name: its oldest watch's product name.
+const groupName = (members) => nameOf([...members].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0]);
 
 const INTERVALS = [[60, '1h'], [180, '3h'], [360, '6h'], [720, '12h'], [1440, '1d'], [4320, '3d']];
 
@@ -85,8 +93,11 @@ function offerHtml(host) {
 // own worker); without that it can only go to the developer. `ask`: submitting also allows the free
 // service for this store, so the form says so.
 // `localOnly`: the watch isn't synced to the user's other computers, because sync storage is full (lib/sync.js).
-function card(w, tp, settings, localOnly) {
+// `ctx`: what grouping needs (every watch, the groups). `member`: the card is one store of a product
+// group, so it is titled by its store, and `cheapest` when it is that group's cheapest.
+function card(w, tp, settings, localOnly, ctx, member = null) {
   const host = recipeHost(w.url);
+  const match = member ? null : suggestedMatch(w, ctx.all, ctx.groups);
   const canFix = !!settings.workerUrl || settings.recipeService !== false;
   const ask = canFix && !recipeServiceFor(settings, w.url, SERVICE_URL);
   const offer = w.recipeOffer && !w.selector && recipeOfferFor(settings, w.url);
@@ -98,13 +109,16 @@ function card(w, tp, settings, localOnly) {
     <div class="head" data-act="toggle">
       <button class="chev" data-act="toggle" title="Show details" aria-label="Show details">▾</button>
       <div class="head-main">
-        <div class="title"><a href="${esc(w.url)}" data-act="open" title="${esc(w.title || w.url)}"><span class="t-head">${esc(tp.head)}</span>${tp.tail ? `<span class="t-tail">${esc(tp.tail)}</span>` : ''}</a></div>
-        <div class="sub">checked ${ago(w.lastCheckedAt)}${w.paused ? ' · paused' : ''} ${problem}</div>
+        <div class="title"><a href="${esc(w.url)}" data-act="open" title="${esc(w.title || w.url)}">${member
+          ? `<span class="t-store">${esc(storeOf(w))}</span><span class="t-rest">${esc(nameOf(w))}</span>`
+          : `<span class="t-head">${esc(tp.head)}</span>${tp.tail ? `<span class="t-tail">${esc(tp.tail)}</span>` : ''}`}</a></div>
+        <div class="sub">${member ? (member.cheapest ? '<span class="cheap">cheapest</span>· ' : '') : `<span class="store">${esc(storeOf(w))}</span>· `}checked ${ago(w.lastCheckedAt)}${w.paused ? ' · paused' : ''} ${problem}</div>
       </div>
       <div class="price"><div class="now${stockState(w) === 'out' && w.lastPrice != null ? ' oos' : ''}">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${stockState(w) === 'out' ? '<div class="oos-tag">out of stock</div>' : deltaHtml(w.history)}</div>
       <button class="iconbtn danger del" data-act="delete" title="Delete watch" aria-label="Delete watch">🗑</button>
     </div>
     ${offer ? offerHtml(host) : ''}
+    ${match ? matchHtml(match, ctx) : ''}
     <div class="detail">
       <div class="meta">
         ${statusBadge(w)}
@@ -119,7 +133,8 @@ function card(w, tp, settings, localOnly) {
         <button class="iconbtn" data-act="check" title="Check now" aria-label="Check now">↻</button>
         <button class="iconbtn" data-act="pause" title="${w.paused ? 'Resume' : 'Pause'}" aria-label="${w.paused ? 'Resume' : 'Pause'}">${w.paused ? '▶' : '⏸'}</button>
       </div>
-      <div class="chart">${priceChartSVG(w.history, { currency: cur, width: 338, height: 110 })}</div>
+      <div class="chart">${priceChartSVG(w.history, { currency: cur, width: member ? 316 : 338, height: 110 })}</div>
+      ${groupable(w) ? groupingHtml(w, ctx, !!member) : ''}
       ${w.lastSummary ? `<div class="summary">“${esc(w.lastSummary)}”</div>` : ''}
       ${w.selector ? '' : `<div class="report">
         <button class="report-open" data-act="report-open" type="button">${canFix ? 'Wrong result? Report &amp; fix' : 'Wrong result? Report it'}</button>
@@ -144,18 +159,79 @@ function card(w, tp, settings, localOnly) {
   </div>`;
 }
 
+// Two watches whose pages state the same EAN: ask whether they're one product. Under the head, so a
+// collapsed card shows it too.
+function matchHtml(o, ctx) {
+  const n = o.group && ctx.groups.has(o.group) ? ctx.groups.get(o.group).length : 0;
+  const where = n ? `${esc(groupName(ctx.groups.get(o.group)))} (${n} stores)` : `${esc(nameOf(o))} at ${esc(storeOf(o))}`;
+  return `<div class="offer match">
+      <p>Same EAN as ${where}. The same product?</p>
+      <div class="offer-row">
+        <button class="primary" data-act="same" data-other="${esc(o.id)}" type="button">Group them</button>
+        <button class="offer-no" data-act="notsame" data-other="${esc(o.id)}" type="button">No</button>
+      </div>
+    </div>`;
+}
+
+// Finding the product in other stores, and grouping it with a watch of another store by hand. A group's
+// stores search from the group's head instead, and each can leave it.
+function groupingHtml(w, ctx, member) {
+  if (member) return '<div class="grouping"><button class="linkbtn" data-act="ungroup" type="button">Not the same product? Take it out of this group</button></div>';
+  const opts = [];
+  for (const ms of ctx.groups.values()) opts.push(`<option value="${esc(ms[0].id)}">${esc(groupName(ms))} (${ms.length} stores)</option>`);
+  for (const o of ctx.all) {
+    if (o.id === w.id || !groupable(o) || (o.group && ctx.groups.has(o.group))) continue;
+    opts.push(`<option value="${esc(o.id)}">${esc(nameOf(o))} · ${esc(storeOf(o))}</option>`);
+  }
+  return `<div class="grouping">
+      <button data-act="find" type="button" title="Search Google for this product, and add other stores from the results">${SEARCH_ICON} Find in other stores</button>
+      ${opts.length ? `<select data-act="group" aria-label="Group with another watch of the same product"><option value="">Same product as…</option>${opts.join('')}</select>` : ''}
+    </div>`;
+}
+
+// A product watched at several stores: one card with the cheapest price you can buy at now, and the
+// stores inside, cheapest first.
+function groupCard(gid, members, tp, settings, localOnly, ctx) {
+  const best = cheapest(members);
+  // The search starts from a store whose page gave the EAN (it finds the exact product), else the oldest.
+  const from = members.find((m) => m.gtin) || [...members].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
+  const sub = best ? `${members.length} stores · cheapest at ${esc(storeOf(best))}` : `${members.length} stores · none available now`;
+  return `<div class="group${expandedGroups.has(gid) ? '' : ' collapsed'}" data-group="${esc(gid)}">
+    <div class="head" data-act="gtoggle">
+      <button class="chev" data-act="gtoggle" title="Show stores" aria-label="Show stores">▾</button>
+      <div class="head-main">
+        <div class="title"><span class="t-head">${esc(tp.head)}</span>${tp.tail ? `<span class="t-tail">${esc(tp.tail)}</span>` : ''}</div>
+        <div class="sub">${sub}</div>
+      </div>
+      <div class="price"><div class="now">${best ? fmt(best.lastPrice) : '—'} <span class="muted" style="font-size:11px">${esc(best?.currency || '')}</span></div><div class="delta muted">best price</div></div>
+      <button class="iconbtn find" data-act="find" data-id="${esc(from.id)}" title="Find in other stores" aria-label="Find in other stores">${SEARCH_ICON}</button>
+    </div>
+    <div class="members">${members.map((m) => card(m, null, settings, localOnly.has(m.id), ctx, { cheapest: m === best })).join('')}</div>
+  </div>`;
+}
+
 async function render() {
   // As the checks see them: in Firefox, stores allowed before it was asked show their offer again.
   const [watches, settings, ui, { syncState }] = await Promise.all([getWatches(), getSettings().then(sendable), getUi(), chrome.storage.local.get('syncState')]);
   const localOnly = new Set(settings.syncWatches !== false ? syncState?.localOnly || [] : []);
-  const arr = Object.values(watches).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  emptyEl.classList.toggle('hidden', arr.length > 0);
-  // Sibling listings (e.g. the 256 GB and 512 GB of one product) get the words that tell them apart
-  // pinned after their shared, ellipsized start.
-  const parts = titleParts(arr.map((w) => w.title || w.url));
+  const all = Object.values(watches);
+  emptyEl.classList.toggle('hidden', all.length > 0);
+  // A product group is one item, placed by its newest store; every other watch is one of its own.
+  const groups = groupsOf(watches);
+  const items = [...groups].map(([gid, members]) => ({ gid, members }));
+  for (const w of all) if (!(w.group && groups.has(w.group))) items.push({ w });
+  const newest = (it) => (it.w ? it.w.createdAt || 0 : Math.max(...it.members.map((m) => m.createdAt || 0)));
+  items.sort((a, b) => newest(b) - newest(a));
+  // Cards are titled by product, without the store's name (it is on the line below). Sibling listings
+  // (e.g. the 256 GB and 512 GB of one product) get the words that tell them apart pinned after their
+  // shared, ellipsized start.
+  const parts = titleParts(items.map((it) => (it.w ? nameOf(it.w) : groupName(it.members))));
+  const ctx = { all, groups };
   // Every value card() puts in this HTML goes through esc(), or is a number the extension computed;
   // the chart filters the page-supplied currency itself (chart.js). MV3's page CSP blocks inline script.
-  listEl.innerHTML = arr.map((w, i) => card(w, parts[i], settings, localOnly.has(w.id))).join('');
+  listEl.innerHTML = items.map((it, i) => (it.w
+    ? card(it.w, parts[i], settings, localOnly.has(it.w.id), ctx)
+    : groupCard(it.gid, it.members, parts[i], settings, localOnly, ctx))).join('');
   maybeShowTour(ui);
 }
 
@@ -166,14 +242,14 @@ function maybeShowTour(ui) {
   if (ui.seenTour || touring) return;
   touring = true;
   const $ = (id) => document.getElementById(id);
-  const firstCard = () => listEl.querySelector('.card');
+  const firstCard = () => listEl.querySelector(':scope > .card, :scope > .group');
   startTour([
     { target: () => $('add'), title: 'Watch a product',
       text: 'On a product page, press <b>Watch this page</b>. BuyTracker keeps checking its price and stock, and notifies you when the price drops or it’s back in stock.' },
     { target: () => $('addArea'), title: 'Or just one part of a page',
       text: 'Press <b>Area</b>, then click a price, a coupon or a banner: you’re notified when that part changes. Right-clicking a page or a link works too.' },
     ...(firstCard() ? [{ target: firstCard, title: 'Your watches',
-      text: 'Click a watch to see its price history, set a target price, change how often it’s checked, or report a wrong price.' }] : []),
+      text: 'Click a watch to see its price history, set a target price, change how often it’s checked, find it in other stores, or report a wrong price.' }] : []),
     { target: () => $('checkAll'), title: 'Check now',
       text: 'Watches are checked on their own while your browser is open. This checks them all right away.' },
     { target: () => $('opts'), title: 'Settings',
@@ -279,8 +355,25 @@ document.getElementById('opts').addEventListener('click', () => chrome.runtime.o
 document.addEventListener('click', async (e) => {
   const actEl = e.target.closest('[data-act]');
   const card = e.target.closest('.card');
-  if (!actEl || !card) return;
+  if (!actEl) return;
   const act = actEl.dataset.act;
+
+  if (act === 'gtoggle') {
+    const g = actEl.closest('.group');
+    g.classList.toggle('collapsed');
+    if (g.classList.contains('collapsed')) expandedGroups.delete(g.dataset.group); else expandedGroups.add(g.dataset.group);
+    return;
+  }
+  // Opens a Google search in a new tab, which closes the popup; the service worker sets the tab up.
+  if (act === 'find') {
+    const fid = actEl.dataset.id || card?.dataset.id;
+    try {
+      const r = await chrome.runtime.sendMessage({ type: 'findElsewhere', id: fid });
+      if (r && !r.ok) throw new Error(r.error || 'could not open the search');
+    } catch (err) { toast(err.message || String(err)); }
+    return;
+  }
+  if (!card) return;
   const id = card.dataset.id;
 
   if (act === 'toggle') {
@@ -341,6 +434,10 @@ document.addEventListener('click', async (e) => {
   }
   if (act === 'offer-decline') { await answerFor(host, false); await render(); return; }
 
+  if (act === 'same') { await busy(() => joinGroup(id, actEl.dataset.other)); return; }
+  if (act === 'notsame') { await busy(() => notSame(id, actEl.dataset.other)); return; }
+  if (act === 'ungroup') { await busy(() => leaveGroup(id)); return; }
+
   if (act === 'open') { e.preventDefault(); chrome.tabs.create({ url: w.url }); }
   else if (act === 'check') await busy(() => chrome.runtime.sendMessage({ type: 'checkNow', id }));
   else if (act === 'pause') { await updateWatch(id, (cur) => cur && { ...cur, paused: !cur.paused }); await render(); }
@@ -364,6 +461,12 @@ document.addEventListener('change', async (e) => {
   const id = card.dataset.id;
   if (act === 'interval') { const v = Number(e.target.value); await updateWatch(id, (cur) => cur && { ...cur, intervalMin: v }); }
   else if (act === 'target') { const v = parseFloat(e.target.value); await updateWatch(id, (cur) => cur && { ...cur, targetPrice: isFinite(v) ? v : null }); }
+  else if (act === 'group' && e.target.value) {
+    // The group opens, so the watch is seen to land in it.
+    const gid = await joinGroup(id, e.target.value).catch((err) => { toast(err.message || String(err)); return null; });
+    if (gid) expandedGroups.add(gid);
+    await render();
+  }
 });
 
 render();

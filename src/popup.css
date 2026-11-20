@@ -30,11 +30,11 @@ button:focus-visible { outline: 2px solid rgba(31,111,235,.6); outline-offset: 1
 .hicon svg { width: 17px; height: 17px; }
 @media (prefers-reduced-motion: reduce) { button { transition: none; } }
 main { padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
-.card { background: #11151a; border: 1px solid #1f2630; border-radius: 8px; padding: 10px; }
-.card .head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.card, .group { background: #11151a; border: 1px solid #1f2630; border-radius: 8px; padding: 10px; }
+.card .head, .group > .head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .chev { background: none; border: none; padding: 2px; color: #7a8794; font-size: 12px; line-height: 1; transition: transform .15s ease; flex: none; }
 .chev:hover { background: none; color: #e6edf3; }
-.card:not(.collapsed) .chev { transform: rotate(180deg); }
+.card:not(.collapsed) > .head .chev, .group:not(.collapsed) > .head .chev { transform: rotate(180deg); }
 .head-main { flex: 1; min-width: 0; }
 .title { display: flex; font-weight: 600; font-size: 13px; line-height: 1.25; white-space: nowrap; overflow: hidden; }
 .title a { display: flex; min-width: 0; color: #e6edf3; text-decoration: none; }
@@ -126,3 +126,22 @@ footer { color: #7a8794; }
   background: #3a1d1f; border: 1px solid #4d2526; color: #f0a0a0; font-size: 12px; }
 /* Delete, armed by a first click: the second one deletes */
 .head .del.armed { background: #3a1d1f; border-color: #4d2526; color: #f87171; font-size: 11.5px; padding: 3px 7px; }
+
+/* A product watched at several stores: one card, its stores inside, cheapest first */
+.group.collapsed .members { display: none; }
+.members { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.members .card { background: #0d1116; border-color: #1b222c; }
+.t-store { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+.t-rest { min-width: 0; margin-left: .45em; overflow: hidden; text-overflow: ellipsis; color: #7a8794; font-weight: 450; }
+.cheap { color: #34d399; font-weight: 600; }
+.sub .store { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8b97a4; }
+.group > .head .find { flex: none; padding: 5px 6px; }
+.group > .head .find svg, .grouping button svg { width: 14px; height: 14px; }
+/* Find in other stores / same product as… (in a watch's details) */
+.grouping { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.grouping button { padding: 5px 9px; font-size: 11.5px; }
+.grouping select { flex: 1; min-width: 0; max-width: 100%; font-size: 11.5px; padding: 4px 6px; }
+.linkbtn { background: none; border: none; color: #9dc3ff; font-size: 11.5px; font-weight: 550; padding: 2px 0; cursor: pointer; }
+.linkbtn:hover { background: none; text-decoration: underline; }
+.grouping .linkbtn { padding: 2px 0; }
+.group > .head .sub { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

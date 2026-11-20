@@ -19,7 +19,9 @@ price history** with a step chart and change markers.
   A check that can’t read a field records it as unknown and carries the last value forward — it never adds a blank point to the history.
 - ✅ **Open-tab fallback**: when a plain `fetch()` is bot-blocked (Akamai/PerimeterX) or finds no price, BuyTracker re-checks by briefly opening an **inactive background tab** — a real navigation with your session, which gets past the wall and picks up JS-hydrated prices. The mode goes sticky per watch.
 - ✅ **Price history as a step series** (a point is stored only when the price actually changes) + inline SVG chart with lowest-price and current markers.
-- ✅ **Alerts** (Chrome notifications) on price drop, target-price hit, restock, and a change in a watched area.
+- ✅ **Product groups** — the same product watched at several stores is one card in the popup: the best price you can buy at now, and the stores inside, cheapest first. Group watches by hand (**Same product as…**), or accept the popup's suggestion when two stores' pages state the same EAN. A drop that makes a store the cheapest alerts **“⬇️ Now cheapest at …”**.
+- ✅ **Find in other stores** — opens a Google search for the product (its EAN when known, else its name) in a new tab, where each result gets a **“+ BuyTracker”** button that adds that store to the product's group. Only that tab gets buttons; ads and Google's own pages never do.
+- ✅ **Alerts** (Chrome notifications) on price drop (old → new price and the change in %), target-price hit, restock, and a change in a watched area.
 - ✅ Per-watch **check interval** and **target price**; pause/resume/delete.
 - ⏳ Checks run only while the browser is open (extension-only mode). Always-on scheduling is the planned next step. (Away-from-PC alerting channel TBD — **not** Telegram.)
 
@@ -68,10 +70,13 @@ manifest. Listing notes are in `STORE_LISTING.md`. The add-on id (`buytracker@sa
 - Browse to a product page → click the toolbar icon → **+ Watch this page**.
 - The popup lists each watch with its current price, change vs. last, a price-history chart, status, interval, and a target-price field.
 - **check now** forces a re-check; **↻** checks everything that’s due.
+- **Find in other stores** (in a watch's details, or the 🔍 on a product group) searches Google for the
+  product; press **+ BuyTracker** on a store's result to add it to the product's group. **Same product
+  as…** groups two watches by hand; a store in a group can be taken out again.
 - **Sync between computers** (Settings, on by default): the watch list follows you to your other
   computers through the browser's own sync storage — Chrome with your Google account and sync on,
   Firefox with your Firefox account. What's shared is each watch's setup (page, title, target, interval,
-  pause) and its last price/stock point; every computer checks on its own and keeps its own history.
+  pause, product group) and its last price/stock point; every computer checks on its own and keeps its own history.
   A computer that receives another's last point takes it as its own, so a drop alerted on one isn't
   alerted again by the next. Sync storage holds 100 KB, about 150–200 watches; past that the newest
   stay on their computer, and their cards say so. Chrome and Firefox don't sync with each other.
@@ -93,6 +98,12 @@ enforces Chrome's quotas.
 
 ```bash
 node test/sync.test.mjs
+```
+
+Product groups, EAN checking and the search query, in plain Node:
+
+```bash
+node test/groups.test.mjs
 ```
 
 ## How it works
@@ -126,6 +137,9 @@ Every N hours  ─► background.js acquires (cheapest reliable signal first):
 | `worker/` | The recipe service (Cloudflare Worker + Workers AI, KV, D1) and report intake |
 | `src/lib/storage.js` | chrome.storage wrappers + append-on-change history logic |
 | `src/lib/sync.js` | Sync between computers: merges the watch list with `chrome.storage.sync` |
+| `src/lib/groups.js` | Product groups: EAN checking, grouping, the cheapest store, result-link cleanup |
+| `src/lib/titles.js` | Card titles: telling sibling listings apart, product names without the store, the search query |
+| `src/search.js` | Content script on Google results, registered only while a "Find in other stores" tab is open |
 | `src/lib/chart.js` | Dependency-free SVG step chart |
 | `src/popup.*` | Watchlist UI with inline charts |
 | `src/options.*` | Settings: free recipe creator, check interval, sync, error reports, own worker (experimental) |

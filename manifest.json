@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BuyTracker",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Watch any product page for price drops, new offers, and restocks — with smart alerts and price history.",
   "permissions": ["storage", "unlimitedStorage", "alarms", "notifications", "scripting", "activeTab", "tabs", "contextMenus"],
   "host_permissions": ["<all_urls>"],
