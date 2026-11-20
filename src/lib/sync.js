@@ -255,7 +255,7 @@ export async function sync() {
       let took = false;
       for (const k of KEPT) if (kept[id]?.[k] != null && w[k] == null) { w[k] = kept[id][k]; took = true; }
       if (took) {
-        w.specAt = Math.max(now, (s.u || 0) + 1); // newer than the shared setup, so it goes up
+        w.specAt = Math.max(now, (s.u || 0) + 1, (w.specAt || 0) + 1); // newer than both setups, so it goes up
         changed = true;
       }
       for (const p of [o, ...(carried[id] || [])].filter(Boolean).sort((a, b) => a.t - b.t)) {

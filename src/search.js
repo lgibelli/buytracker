@@ -9,19 +9,20 @@
   const send = (msg) => chrome.runtime.sendMessage(msg);
   const MARK = 'data-buytracker';
   const seen = new WeakSet();
-  let observer = null;
+  let observer = null, timer = null, stopped = false;
 
   send({ type: 'searchTab' }).then((info) => { if (info?.ok) start(info); }, () => {});
 
   function start(info) {
     pill(info.name);
     decorate();
-    let t = null;
-    observer = new MutationObserver(() => { clearTimeout(t); t = setTimeout(decorate, 250); });
+    observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(decorate, 250); });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
   function stop() {
+    stopped = true;
+    clearTimeout(timer);
     observer?.disconnect();
     for (const el of document.querySelectorAll(`[${MARK}]`)) el.remove();
     send({ type: 'searchStop' }).catch(() => {});
@@ -43,7 +44,7 @@
   // names change all the time. Sponsored results sit in their own containers.
   function decorate() {
     const root = document.getElementById('rso') || document.getElementById('search');
-    if (!root) return;
+    if (!root || stopped) return;
     for (const h of root.querySelectorAll('a h3')) {
       const a = h.closest('a');
       if (!a || seen.has(a)) continue;

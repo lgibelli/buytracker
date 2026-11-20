@@ -56,7 +56,7 @@ let ws = await getWatches();
 ok(groupsOf(ws).size === 0, 'no groups yet');
 const g = await joinGroup('w_b', 'w_a');
 ws = await getWatches();
-ok(g === 'g_a' && ws.w_a.group === g && ws.w_b.group === g, 'joining starts a group named after the watch joined', [ws.w_a.group, ws.w_b.group]);
+ok(/^g_/.test(g) && ws.w_a.group === g && ws.w_b.group === g, 'joining starts a group with both in it', [ws.w_a.group, ws.w_b.group]);
 ok(specOf(ws.w_a).group === g && ws.w_a.specAt > 0, 'the group is part of the shared setup');
 await joinGroup('w_d', 'w_b');
 ws = await getWatches();
@@ -78,6 +78,15 @@ ws = await getWatches();
 ok(groupsOf(ws).size === 0 && ws.w_a.group === g, 'a group left with one watch shows as a plain watch again');
 await joinGroup('w_c', 'w_a');
 ok(groupsOf(await getWatches()).get(g)?.length === 2, 'and joining it again reuses its group');
+// A watch that left a group, grouped with another store: a new group, not back into the old one.
+await joinGroup('w_b', 'w_a');
+await leaveGroup('w_a');
+await putWatch(w('w_f', { createdAt: T + 5, lastPrice: 500 }));
+const g2 = await joinGroup('w_f', 'w_a');
+ws = await getWatches();
+groups = groupsOf(ws);
+ok(g2 !== g && groups.get(g2)?.map((m) => m.id).sort().join() === 'w_a,w_f' && groups.get(g)?.map((m) => m.id).sort().join() === 'w_b,w_c',
+  'a watch that left its group starts a new one with the next store, leaving the old group as it was', [...groups].map(([k, v]) => [k, v.map((m) => m.id)]));
 
 console.log(fails ? `--- GROUPS TEST: ${fails} FAILURE(S) ---` : '--- GROUPS TEST: ALL PASS ---');
 process.exit(fails ? 1 : 0);

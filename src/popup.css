@@ -145,3 +145,4 @@ footer { color: #7a8794; }
 .linkbtn:hover { background: none; text-decoration: underline; }
 .grouping .linkbtn { padding: 2px 0; }
 .group > .head .sub { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.group > .head .sub .badge { margin-left: 1px; }

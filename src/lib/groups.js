@@ -2,7 +2,7 @@
 // shared between computers like the rest of its setup (storage.js SPEC_FIELDS). A group is nothing
 // more than the watches carrying the same one, so there is nothing else to store or sync, and a group
 // left with a single watch shows as a plain watch again.
-import { updateWatch, availState } from './storage.js';
+import { updateWatch, availState, newId } from './storage.js';
 
 // A GTIN (EAN-13, UPC-A, EAN-8, GTIN-14) as a page states it, if it is one: a valid length and a
 // correct GS1 check digit. Anything else in a gtin field (a SKU, an all-zero placeholder) is null.
@@ -57,8 +57,9 @@ export function cheapest(ws) {
   return priced.filter((w) => (w.currency || '') === cur).sort((a, b) => a.lastPrice - b.lastPrice)[0];
 }
 
-// The id a watch's group has, or gets when the first other store joins it.
-export const groupIdFor = (w) => w.group || 'g_' + w.id.replace(/^w_/, '');
+// The id a watch's group has, or a new one when the first other store joins it. Never derived from the
+// watch's own id: a watch that left a group must not lead the next store it is grouped with back into it.
+export const groupIdFor = (w) => w.group || 'g_' + newId().slice(2) + Math.random().toString(36).slice(2, 6);
 
 function setGroup(id, group) {
   return updateWatch(id, (w) => (w && w.group !== group ? { ...w, group } : null));

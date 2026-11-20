@@ -7,7 +7,7 @@ import {
   SERVICE_URL, SPEC_FIELDS, keepFreshPoints
 } from './lib/storage.js';
 import { syncSoon, syncRelevant } from './lib/sync.js';
-import { normGtin, cheapest, joinGroup, groupIdFor, cleanLink, sameLink } from './lib/groups.js';
+import { normGtin, cheapest, joinGroup, cleanLink, sameLink } from './lib/groups.js';
 import { storeless, searchQuery } from './lib/titles.js';
 import { installErrorReporting, reportError, isBug, sendFeedback } from './lib/report.js';
 import { sendable } from './lib/consent.js';
@@ -134,6 +134,16 @@ async function tryShopify(url) {
     availability: available ? 'InStock' : 'OutOfStock', hasStructuredPrice: price != null, gtin: v?.barcode || null,
     fullText: '', areaText: null, textHash: null, viaTab: false
   };
+}
+
+// Shopify's product endpoint gives no currency, and a price without one can't be compared with another
+// store's (lib/groups.js cheapest). The page's own structured data names it: read it once, when the
+// watch doesn't know it yet. Only the currency: the page's other fields may describe another variant.
+async function withPageCurrency(ex, url, known) {
+  if (!ex || ex.currency || known) return ex;
+  const page = await fetchAndExtract(url).catch(() => null);
+  if (page?.status === 'ok' && page.currency) ex.currency = page.currency;
+  return ex;
 }
 
 async function fetchHtml(url) {
@@ -363,7 +373,7 @@ function computeFrom(ex, watch) {
 
 // --- watch creation ---
 
-async function saveNewWatch({ cap, selector, fetchMode, baseline, watchType = 'both', group = null }) {
+async function saveNewWatch({ cap, selector, fetchMode, baseline, watchType = 'both' }) {
   const settings = await getSettings();
   const now = Date.now();
   const watch = {
@@ -376,7 +386,7 @@ async function saveNewWatch({ cap, selector, fetchMode, baseline, watchType = 'b
     lastAvailability: cap.product?.availability || null,
     // The product's EAN, when the page states one: it finds the product in other stores and suggests
     // grouping watches of the same product (lib/groups.js). Learned again at every check.
-    gtin: selector ? null : normGtin(cap.product?.gtin), group
+    gtin: selector ? null : normGtin(cap.product?.gtin)
   };
   // Same rule as a re-check (computeFrom): a rendered-DOM guess is only the product's price when the
   // product can be bought. Adding a watch on an already-unavailable listing must not seed the series
@@ -408,7 +418,8 @@ async function addByTab(tab, watchType) {
       price: sh.price ?? result.product?.price ?? null,
       currency: sh.currency || result.product?.currency || null,
       availability: sh.availability || result.product?.availability || null,
-      gtin: sh.gtin || result.product?.gtin || null,
+      // Shopify names the selected variant exactly; with no barcode there, the page's GTIN may be a sibling's.
+      gtin: sh.gtin || null,
       // Keep where the price came from: the variant endpoint is structured, otherwise it is whatever
       // capturePage tagged it (jsonld / dom) — saveNewWatch trusts a 'dom' guess only when in stock.
       priceSource: sh.price != null ? 'shopify' : (result.product?.priceSource || null)
@@ -422,7 +433,7 @@ async function addByTab(tab, watchType) {
 // structured price nor stock (a page that renders them with JS). The tab result is taken when it read
 // more. A cached recipe for the store applies in the tab, as at a check; none is derived here.
 async function readLink(url) {
-  let ex = await tryShopify(url).catch(() => null);
+  let ex = await withPageCurrency(await tryShopify(url).catch(() => null), url, null);
   if (!ex) ex = await fetchAndExtract(url).catch(() => null);
   if (!ex || ex.status !== 'ok' || (!ex.hasStructuredPrice && !ex.availability)) {
     const ex2 = await extractViaTab(url, null).catch(() => null);
@@ -432,7 +443,7 @@ async function readLink(url) {
   return ex;
 }
 
-async function saveRead(url, ex, watchType, group = null) {
+async function saveRead(url, ex, watchType) {
   const cap = {
     url, title: ex.title || url,
     product: (ex.price != null || ex.availability)
@@ -443,7 +454,7 @@ async function saveRead(url, ex, watchType, group = null) {
       : null,
     pageText: ex.fullText || ''
   };
-  return saveNewWatch({ cap, selector: null, fetchMode: ex.viaTab ? 'tab' : 'auto', baseline: cap.pageText, watchType, group });
+  return saveNewWatch({ cap, selector: null, fetchMode: ex.viaTab ? 'tab' : 'auto', baseline: cap.pageText, watchType });
 }
 
 async function addByUrl(url, watchType) {
@@ -567,15 +578,15 @@ async function addFromSearch(tabId, rawUrl, force) {
   const same = Object.values(await getWatches()).find((w) => !w.selector && sameLink(w.url, url));
   if (same?.id === anchor.id) return { status: 'self' };
   if (same) {
-    const was = same.group && same.group === groupIdFor(anchor);
+    const was = !!same.group && same.group === anchor.group;
     await joinGroup(same.id, anchor.id);
     return { status: was ? 'exists' : 'joined', ...brief(same) };
   }
   const ex = await readLink(url);
   if (!ex || ex.status !== 'ok') throw new Error(ex?.status === 'blocked' ? 'The store blocked reading that page.' : 'Could not read that page.');
   if (!force && ex.price == null && !ex.availability) return { status: 'noproduct' };
-  const w = await saveRead(url, ex, anchor.watchType || 'both', groupIdFor(anchor));
-  await joinGroup(w.id, anchor.id); // and the watch searched from, if its group starts now
+  const w = await saveRead(url, ex, anchor.watchType || 'both');
+  await joinGroup(w.id, anchor.id); // the group of the watch searched from, which starts now if it had none
   return { status: 'added', ...brief(w) };
 }
 
@@ -622,7 +633,7 @@ async function runCheck(watch) {
   const tabOpts = { derive: true, need: { price: needPrice, avail: needAvail }, settings };
   try {
     let ex = null;
-    if (!watch.selector) ex = await tryShopify(watch.url).catch(() => null); // Shopify fast-path (not for area watches)
+    if (!watch.selector) ex = await withPageCurrency(await tryShopify(watch.url).catch(() => null), watch.url, watch.currency); // Shopify fast-path (not for area watches)
     if (!ex) ex = (watch.fetchMode === 'tab') ? await extractViaTab(watch.url, watch.selector, tabOpts) : await fetchAndExtract(watch.url);
 
     // A tab renders client-side price/stock (hydrated JSON-LD, the buy box, the DOM price, a per-site
@@ -739,7 +750,9 @@ async function fireNotifications(watch, { change, price, prevPrice, currency, av
 // A drop that makes a store the cheapest of its product group says so: that is the one worth acting on.
 async function dropTitle(watch) {
   if (!watch.group) return '⬇️ Price dropped';
-  const members = Object.values(await getWatches()).filter((w) => w.group === watch.group && !w.selector);
+  // This watch as this check recorded it (sync may have stored a newer point since), the others as stored.
+  const members = Object.values(await getWatches()).filter((w) => w.group === watch.group && !w.selector)
+    .map((w) => (w.id === watch.id ? watch : w));
   return members.length > 1 && cheapest(members)?.id === watch.id ? `⬇️ Now cheapest at ${recipeHost(watch.url)}` : '⬇️ Price dropped';
 }
 

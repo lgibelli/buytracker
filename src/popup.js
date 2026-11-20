@@ -196,12 +196,16 @@ function groupCard(gid, members, tp, settings, localOnly, ctx) {
   // The search starts from a store whose page gave the EAN (it finds the exact product), else the oldest.
   const from = members.find((m) => m.gtin) || [...members].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
   const sub = best ? `${members.length} stores · cheapest at ${esc(storeOf(best))}` : `${members.length} stores · none available now`;
+  // A store whose check fails says so on the collapsed group too, as a lone watch's card does.
+  const failing = members.filter((m) => m.lastStatus && m.lastStatus !== 'ok');
+  const problem = failing.length === 1 ? statusBadge(failing[0]).replace('title="', `title="${esc(storeOf(failing[0]))}: `)
+    : failing.length ? `<span class="badge error" title="${esc(failing.map(storeOf).join(', '))}">${failing.length} stores: check failed</span>` : '';
   return `<div class="group${expandedGroups.has(gid) ? '' : ' collapsed'}" data-group="${esc(gid)}">
     <div class="head" data-act="gtoggle">
       <button class="chev" data-act="gtoggle" title="Show stores" aria-label="Show stores">▾</button>
       <div class="head-main">
         <div class="title"><span class="t-head">${esc(tp.head)}</span>${tp.tail ? `<span class="t-tail">${esc(tp.tail)}</span>` : ''}</div>
-        <div class="sub">${sub}</div>
+        <div class="sub">${problem ? problem + ' ' : ''}${sub}</div>
       </div>
       <div class="price"><div class="now">${best ? fmt(best.lastPrice) : '—'} <span class="muted" style="font-size:11px">${esc(best?.currency || '')}</span></div><div class="delta muted">best price</div></div>
       <button class="iconbtn find" data-act="find" data-id="${esc(from.id)}" title="Find in other stores" aria-label="Find in other stores">${SEARCH_ICON}</button>
