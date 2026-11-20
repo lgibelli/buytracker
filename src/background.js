@@ -743,16 +743,16 @@ async function fireNotifications(watch, { change, price, prevPrice, currency, av
   const tgt = watch.targetPrice;
   if (change && wantsPrice && tgt != null && price != null && price <= tgt) notify(watch, `🎯 Target price hit (≤ ${tgt})`, `${priceMove(prevPrice, price, cur)} · ${watch.title}`);
   else if (wantsAvail && change === 'restock') notify(watch, '📦 Back in stock', `${watch.title} is available again.`);
-  else if (wantsPrice && change === 'drop') notify(watch, await dropTitle(watch), `${priceMove(prevPrice, price, cur)} · ${watch.title}`);
+  else if (wantsPrice && change === 'drop') notify(watch, await dropTitle(watch, price), `${priceMove(prevPrice, price, cur)} · ${watch.title}`);
   else if (areaChanged) notify(watch, '👀 Watched area changed', `${watch.title}: ${watch.lastSummary || 'the area you watch changed.'}`);
 }
 
 // A drop that makes a store the cheapest of its product group says so: that is the one worth acting on.
-async function dropTitle(watch) {
+// `price` is the one the alert shows: saving may have taken a newer point synced meanwhile.
+async function dropTitle(watch, price) {
   if (!watch.group) return '⬇️ Price dropped';
-  // This watch as this check recorded it (sync may have stored a newer point since), the others as stored.
   const members = Object.values(await getWatches()).filter((w) => w.group === watch.group && !w.selector)
-    .map((w) => (w.id === watch.id ? watch : w));
+    .map((w) => (w.id === watch.id ? { ...watch, lastPrice: price } : w));
   return members.length > 1 && cheapest(members)?.id === watch.id ? `⬇️ Now cheapest at ${recipeHost(watch.url)}` : '⬇️ Price dropped';
 }
 

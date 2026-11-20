@@ -195,7 +195,11 @@ function groupCard(gid, members, tp, settings, localOnly, ctx) {
   const best = cheapest(members);
   // The search starts from a store whose page gave the EAN (it finds the exact product), else the oldest.
   const from = members.find((m) => m.gtin) || [...members].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
-  const sub = best ? `${members.length} stores · cheapest at ${esc(storeOf(best))}` : `${members.length} stores · none available now`;
+  // No price to compare (restock watches, or nothing read yet): say where it can be bought, if anywhere.
+  const inStock = members.find((m) => stockState(m) === 'in');
+  const sub = `${members.length} stores · ` + (best ? `cheapest at ${esc(storeOf(best))}`
+    : inStock ? `in stock at ${esc(storeOf(inStock))}`
+    : members.every((m) => stockState(m) === 'out') ? 'none available now' : 'no price yet');
   // A store whose check fails says so on the collapsed group too, as a lone watch's card does.
   const failing = members.filter((m) => m.lastStatus && m.lastStatus !== 'ok');
   const problem = failing.length === 1 ? statusBadge(failing[0]).replace('title="', `title="${esc(storeOf(failing[0]))}: `)
