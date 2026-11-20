@@ -70,6 +70,12 @@ ok(suggestedMatch(ws.w_a, Object.values(ws), groups) === null, 'and the grouped 
 await notSame('w_c', 'w_a');
 ws = await getWatches();
 ok(suggestedMatch(ws.w_c, Object.values(ws), groupsOf(ws)) === null && !specOf(ws.w_c).notSame, 'after "No" it stops asking (kept on this computer)');
+await putWatch(w('w_g', { createdAt: T + 6, lastPrice: 459, gtin: '4006381333931' }));
+await joinGroup('w_g', 'w_a');
+ws = await getWatches();
+ok(groupsOf(ws).get(g).some((m) => m.id === 'w_g') && suggestedMatch(ws.w_c, Object.values(ws), groupsOf(ws)) === null,
+  'a "No" to a group holds when another of its stores has the same EAN');
+await leaveGroup('w_g');
 await joinGroup('w_e', 'w_a').catch(() => {});
 ok(!groupsOf(await getWatches()).get(g).some((m) => m.id === 'w_e'), 'an area watch is never shown in a group');
 await leaveGroup('w_d');

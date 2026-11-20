@@ -88,14 +88,16 @@ export function notSame(id, otherId) {
 }
 
 // The watch to suggest grouping `w` with, from its EAN, or null. Shown on one card of the pair only:
-// the one that would join (a lone watch joins a group), or the newer of two lone watches.
+// the one that would join (a lone watch joins a group), or the newer of two lone watches. A "No" to
+// any store of a group is a no to the group: the prompt named the group.
 export function suggestedMatch(w, all, groups) {
   if (!w.gtin || !groupable(w)) return null;
   const inGroup = (x) => !!x.group && groups.has(x.group);
   if (inGroup(w)) return null;
+  const rejected = (o) => (w.notSame || []).includes(o.id) || (o.notSame || []).includes(w.id);
   for (const o of all) {
     if (o.id === w.id || !groupable(o) || !sameGtin(w.gtin, o.gtin)) continue;
-    if ((w.notSame || []).includes(o.id) || (o.notSame || []).includes(w.id)) continue;
+    if ((inGroup(o) ? groups.get(o.group) : [o]).some(rejected)) continue;
     if (!inGroup(o) && ((o.createdAt || 0) > (w.createdAt || 0) || ((o.createdAt || 0) === (w.createdAt || 0) && o.id > w.id))) continue;
     return o;
   }
