@@ -3,7 +3,7 @@ import { capturePage } from './lib/capture.js';
 import { pickArea } from './lib/picker.js';
 import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitizeRecipe, recipeServiceFor, recipeOfferFor } from './lib/recipe.js';
 import {
-  getSettings, setSettings, dropRetiredSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice,
+  getSettings, setSettings, dropRetiredSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice, lastKnownPrice, priceMove,
   SERVICE_URL, SPEC_FIELDS, keepFreshPoints
 } from './lib/storage.js';
 import { syncSoon, syncRelevant } from './lib/sync.js';
@@ -562,6 +562,7 @@ async function runCheck(watch) {
     if (watch.selector && areaOkFinal && ex.textHash) watch.lastAreaHash = ex.textHash;
     if (areaChanged) watch.lastSummary = excerpt(ex.areaText);
     else if (!watch.selector) watch.lastSummary = null; // left over from the retired Claude fallback
+    const prevPrice = lastKnownPrice(watch.history);
     const change = recordObservation(watch, { t: now, price: res.price, currency: res.currency, availability: res.availability });
     watch.lastStatus = (res.price == null && !res.availability) ? 'no_data' : 'ok';
     watch.lastCheckedAt = now;
@@ -573,7 +574,7 @@ async function runCheck(watch) {
     const saved = await saveChecked(watch);
     // Availability as recorded (carried forward when this check couldn't read it), so a price move on a
     // listing last known to be unpurchasable stays quiet.
-    if (saved && !saved.superseded) fireNotifications(watch, { change, price: res.price, currency: res.currency, availability: watch.lastAvailability, areaChanged });
+    if (saved && !saved.superseded) fireNotifications(watch, { change, price: res.price, prevPrice, currency: res.currency, availability: watch.lastAvailability, areaChanged });
     return watch;
   } catch (e) {
     reportBug(e);
@@ -588,7 +589,7 @@ function excerpt(text) {
   return t.length > 140 ? t.slice(0, 139).trimEnd() + '…' : t;
 }
 
-function fireNotifications(watch, { change, price, currency, availability, areaChanged }) {
+function fireNotifications(watch, { change, price, prevPrice, currency, availability, areaChanged }) {
   if (!change && !areaChanged) return; // nothing actually changed — never repeat alerts (e.g. target-hit) every check
   const cur = currency || watch.currency || '';
   // A price on something that can't be bought right now isn't actionable — and while a product is
@@ -596,9 +597,9 @@ function fireNotifications(watch, { change, price, currency, availability, areaC
   const wantsPrice = watch.watchType !== 'availability' && availState(availability) !== 'out';
   const wantsAvail = watch.watchType !== 'price';
   const tgt = watch.targetPrice;
-  if (change && wantsPrice && tgt != null && price != null && price <= tgt) notify(watch, '🎯 Target price hit', `${watch.title} is ${price} ${cur} (≤ ${tgt}).`);
+  if (change && wantsPrice && tgt != null && price != null && price <= tgt) notify(watch, `🎯 Target price hit (≤ ${tgt})`, `${priceMove(prevPrice, price, cur)} · ${watch.title}`);
   else if (wantsAvail && change === 'restock') notify(watch, '📦 Back in stock', `${watch.title} is available again.`);
-  else if (wantsPrice && change === 'drop') notify(watch, '⬇️ Price dropped', `${watch.title} is now ${price} ${cur}.`);
+  else if (wantsPrice && change === 'drop') notify(watch, '⬇️ Price dropped', `${priceMove(prevPrice, price, cur)} · ${watch.title}`);
   else if (areaChanged) notify(watch, '👀 Watched area changed', `${watch.title}: ${watch.lastSummary || 'the area you watch changed.'}`);
 }
 

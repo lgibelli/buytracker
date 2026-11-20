@@ -36,6 +36,19 @@ const path = require("path").resolve(__dirname, "..");
     const kindOos = recordObservation(w0, { t: 2, price: null, currency: 'PLN', availability: 'OutOfStock' });
     console.log(kindOos === 'oos' ? 'OK: recordObservation in→out with price gone = oos (not drop)' : (fail(`recordObservation kind=${kindOos}`), ''));
 
+    // 0b1. Notification text: "old → new (±X%)", the old price being the last one on record even when
+    //      the history ends in a priceless out-of-stock point.
+    const { priceMove, lastKnownPrice } = await import(require('url').pathToFileURL(path + '/src/lib/storage.js').href);
+    const MOVE_CASES = [
+      [[59.99, 49.99, 'EUR'], '59.99 → 49.99 EUR (-17%)'], [[40, 45, 'EUR'], '40 → 45 EUR (+13%)'],
+      [[100, 99.5, 'EUR'], '100 → 99.50 EUR (-0.5%)'], [[null, 49.9, 'EUR'], '49.90 EUR'], [[50, 50, 'PLN'], '50 PLN']
+    ];
+    const moveBad = MOVE_CASES.filter(([args, want]) => priceMove(...args) !== want);
+    const lastKnown = lastKnownPrice(w0.history);
+    console.log(moveBad.length === 0 && lastKnown === 2199
+      ? 'OK: priceMove formats old → new (±X%); lastKnownPrice skips the priceless OOS point'
+      : (fail('priceMove: ' + moveBad.map(([a]) => `${JSON.stringify(a)}→${priceMove(...a)}`).join(', ') + ` lastKnownPrice=${lastKnown}`), ''));
+
     // 0b2. trustedPrice: an amount only READ off the page (DOM scan or LLM) is the product's own
     //      price only while the product is purchasable. Regression for "ECOVACS WINBOT W3 … 18.99 PLN":
     //      the listing was "Chwilowo niedostępne" and had no price at all, so every zł on it belonged

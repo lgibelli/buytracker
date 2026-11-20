@@ -227,6 +227,24 @@ export function trustedPrice(price, { structured, availability }) {
 
 // Append a price/availability point only when something actually changes (CamelCamelCamel-style
 // step series). Returns the change kind: 'new' | 'drop' | 'rise' | 'restock' | 'oos' | 'change' | null.
+// The last price on record (history may end in a priceless point while out of stock) — what a
+// notification's "old → new" compares a new price against, same as the popup card's delta.
+export function lastKnownPrice(history) {
+  return (history || []).findLast((p) => p.price != null)?.price ?? null;
+}
+
+const fmtPrice = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
+// "59.99 → 49.99 EUR (-17%)" when the price moved from prev, else just "49.99 EUR".
+export function priceMove(prev, price, currency) {
+  const now = currency ? `${fmtPrice(price)} ${currency}` : fmtPrice(price);
+  if (!prev || prev === price) return now;
+  const pct = ((price - prev) / prev) * 100, a = Math.abs(pct);
+  const n = a >= 1 ? String(Math.round(a)) : a.toFixed(a >= 0.1 ? 1 : 2);
+  const move = `${fmtPrice(prev)} → ${now}`;
+  return n === '0.00' ? move : `${move} (${pct < 0 ? '-' : '+'}${n}%)`;
+}
+
 export function recordObservation(watch, { t, price, currency, availability }) {
   watch.history = watch.history || [];
   const prev = watch.history[watch.history.length - 1] || null;
