@@ -112,7 +112,7 @@ function card(w, tp, settings, localOnly, ctx, member = null) {
         <div class="title"><a href="${esc(w.url)}" data-act="open" title="${esc(w.title || w.url)}">${member
           ? `<span class="t-store">${esc(storeOf(w))}</span><span class="t-rest">${esc(nameOf(w))}</span>`
           : `<span class="t-head">${esc(tp.head)}</span>${tp.tail ? `<span class="t-tail">${esc(tp.tail)}</span>` : ''}`}</a></div>
-        <div class="sub">${member ? (member.cheapest ? '<span class="cheap">cheapest</span>· ' : '') : `<span class="store">${esc(storeOf(w))}</span>· `}checked ${ago(w.lastCheckedAt)}${w.paused ? ' · paused' : ''} ${problem}</div>
+        <div class="sub">${member ? (member.cheapest ? '<span class="cheap">cheapest</span>' : '') : `<span class="store">${esc(storeOf(w))}</span>`}<span class="when">${member && !member.cheapest ? '' : '· '}checked ${ago(w.lastCheckedAt)}${w.paused ? ' · paused' : ''}</span>${problem}</div>
       </div>
       <div class="price"><div class="now${stockState(w) === 'out' && w.lastPrice != null ? ' oos' : ''}">${fmt(w.lastPrice)} <span class="muted" style="font-size:11px">${esc(cur)}</span></div>${stockState(w) === 'out' ? '<div class="oos-tag">out of stock</div>' : deltaHtml(w.history)}</div>
       <button class="iconbtn danger del" data-act="delete" title="Delete watch" aria-label="Delete watch">🗑</button>

@@ -134,7 +134,11 @@ footer { color: #7a8794; }
 .t-store { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
 .t-rest { min-width: 0; margin-left: .45em; overflow: hidden; text-overflow: ellipsis; color: #7a8794; font-weight: 450; }
 .cheap { color: #34d399; font-weight: 600; }
-.sub .store { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8b97a4; }
+/* One line: a long store name gives way first, then "checked … ago"; a problem badge always shows. */
+.sub { white-space: nowrap; }
+.sub .store { flex: 0 8 auto; min-width: 3em; overflow: hidden; text-overflow: ellipsis; color: #8b97a4; }
+.sub .when { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sub .badge, .sub .cheap { flex: none; }
 .group > .head .find { flex: none; padding: 5px 6px; }
 .group > .head .find svg, .grouping button svg { width: 14px; height: 14px; }
 /* Find in other stores / same product as… (in a watch's details) */
