@@ -9,6 +9,7 @@
   const send = (msg) => chrome.runtime.sendMessage(msg);
   const MARK = 'data-buytracker';
   const seen = new WeakSet();
+  const unplaced = new Map(); // link → its button, for results not laid out yet (hidden)
   let observer = null, timer = null, stopped = false;
 
   send({ type: 'searchTab' }).then((info) => { if (info?.ok) start(info); }, () => {});
@@ -45,14 +46,43 @@
   function decorate() {
     const root = document.getElementById('rso') || document.getElementById('search');
     if (!root || stopped) return;
+    for (const [a, host] of unplaced) if (!a.isConnected || place(a, host)) unplaced.delete(a);
     for (const h of root.querySelectorAll('a h3')) {
       const a = h.closest('a');
       if (!a || seen.has(a)) continue;
       seen.add(a);
       if (a.closest('#tads, #tadsb, #bottomads')) continue;
       const url = pageOf(a);
-      if (url) a.after(button(url));
+      if (!url) continue;
+      const host = button(url);
+      if (!place(a, host)) unplaced.set(a, host);
     }
+  }
+
+  // Google lays some results out with CSS transforms: a container flipped upside down whose own
+  // elements are flipped back, so the site's name shows above a title that comes first in the page.
+  // A button added there would show upside down, above the result. It is flipped back as Google's own
+  // elements are, and goes on the link's other side if it still shows above the title. False while
+  // the result isn't laid out (hidden): it is placed again at the next pass.
+  function place(a, host) {
+    if (!host.isConnected) a.after(host);
+    upright(host);
+    const title = a.getBoundingClientRect();
+    if (!title.height) return false;
+    if (host.getBoundingClientRect().top < title.top - 1) { a.before(host); upright(host); }
+    return true;
+  }
+
+  function upright(host) {
+    let sx = 1, sy = 1;
+    for (let e = host.parentElement; e; e = e.parentElement) {
+      const m = /matrix(3d)?\(([^)]*)\)/.exec(getComputedStyle(e).transform);
+      if (!m) continue;
+      const v = m[2].split(',').map(Number);
+      if (v[0] < 0) sx = -sx;
+      if (v[m[1] ? 5 : 3] < 0) sy = -sy;
+    }
+    host.style.transform = sx < 0 || sy < 0 ? `scale(${sx}, ${sy})` : '';
   }
 
   const css = (rules) => { const s = document.createElement('style'); s.textContent = rules; return s; };
@@ -61,7 +91,7 @@
   function button(url) {
     const host = document.createElement('div');
     host.setAttribute(MARK, '');
-    host.style.cssText = 'margin: 6px 0 4px;';
+    host.style.cssText = 'margin: 6px 0 4px; width: fit-content;';
     const root = host.attachShadow({ mode: 'closed' });
     root.append(css(`
       button { font: ${FONT}; color: inherit; background: transparent; border: 1px solid rgba(128,128,128,.55);
