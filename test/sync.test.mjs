@@ -289,5 +289,28 @@ ok(!sup5 && w5.lastPrice === 75, 'a newer point from elsewhere becomes the curre
 w5 = checked(70);
 ok(!keepFreshPoints(w5, { history: [P1] }) && w5.history.length === 2, 'nothing new elsewhere: the check saves as before');
 
+// --- product groups follow the watches; a merged twin keeps the group only it was in ---
+const K = computer(), L = computer();
+K.storage.sync = L.storage.sync = area(true);
+on(K);
+await K.storage.local.set({ watches: {
+  k1: watch('k1', 'https://shop.example/robot', { group: 'g_k1' }),
+  k2: watch('k2', 'https://other.example/robot', { group: 'g_k1', createdAt: T0 + H }),
+  k3: watch('k3', 'https://third.example/robot', { createdAt: T0 + 2 * H }),
+  k4: watch('k4', 'https://third.example/robot', { createdAt: T0 + 3 * H, group: 'g_k1' })
+} });
+await sync(); await sync();
+let wk = await getWatches();
+ok(wk.k3 && !wk.k4 && wk.k3.group === 'g_k1' && K.storage.sync.data['w:k3']?.group === 'g_k1', 'same page twice: the kept watch takes the group only the other was in', wk.k3);
+on(L);
+await sync();
+wk = await getWatches();
+ok(['k1', 'k2', 'k3'].every((id) => wk[id]?.group === 'g_k1'), 'the group arrives on the other computer with its watches', Object.values(wk).map((w) => [w.id, w.group]));
+await updateWatch('k2', (w) => ({ ...w, group: null }));
+await sync();
+on(K);
+await sync();
+ok((await getWatches()).k2.group === null, 'taking a watch out of its group on one computer does so on the other');
+
 console.log(fails ? `--- SYNC TEST: ${fails} FAILURE(S) ---` : '--- SYNC TEST: ALL PASS ---');
 process.exitCode = fails ? 1 : 0;

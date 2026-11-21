@@ -42,6 +42,7 @@ export function capturePage(selector) {
   // Collect every offer as its own candidate — variants may be one Product's `offers` array or,
   // as on Shopify, split across many Product blocks. We then pick the candidate matching the URL.
   const cands = [];
+  const gtinOf = (o) => (o ? o.gtin13 ?? o.gtin ?? o.gtin12 ?? o.gtin14 ?? o.gtin8 ?? null : null); // checked by the caller
   for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
     let blocks;
     try { blocks = JSON.parse(el.textContent); } catch { continue; }
@@ -61,7 +62,8 @@ export function capturePage(selector) {
           currency: (off?.priceCurrency ?? n.priceCurrency ?? '').toString().toUpperCase() || null,
           availability,
           ref: off?.url || off?.['@id'] || n.url || n['@id'] || null,
-          sku: off?.sku ?? n.sku ?? null
+          sku: off?.sku ?? n.sku ?? null,
+          gtin: gtinOf(off) ?? gtinOf(n)
         });
       }
       for (const k in n) stack.push(n[k]);
@@ -70,7 +72,7 @@ export function capturePage(selector) {
 
   let product = null;
   if (cands.length) {
-    const strip = (c) => ({ name: c.name, price: c.price, currency: c.currency, availability: c.availability });
+    const strip = (c) => ({ name: c.name, price: c.price, currency: c.currency, availability: c.availability, gtin: c.gtin });
     let chosen = variantKeys.size
       ? cands.find((c) => (c.sku != null && variantKeys.has(String(c.sku))) || refMatches(c.ref))
       : null;

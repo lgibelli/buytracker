@@ -1,12 +1,14 @@
 import { extractFromHtml, detectBlock, fnv1a } from './lib/extract.js';
 import { capturePage } from './lib/capture.js';
 import { pickArea } from './lib/picker.js';
-import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitizeRecipe, recipeServiceFor, recipeOfferFor } from './lib/recipe.js';
+import { buildSnapshot, applyRecipe, getRecipe, putRecipe, deriveRecipe, sanitizeRecipe, recipeServiceFor, recipeOfferFor, recipeHost } from './lib/recipe.js';
 import {
   getSettings, setSettings, dropRetiredSettings, getWatches, getWatch, putWatch, updateWatch, newId, recordObservation, availState, trustedPrice, lastKnownPrice, priceMove,
   SERVICE_URL, SPEC_FIELDS, keepFreshPoints
 } from './lib/storage.js';
 import { syncSoon, syncRelevant } from './lib/sync.js';
+import { normGtin, cheapest, joinGroup, cleanLink, sameLink } from './lib/groups.js';
+import { storeless, searchQuery } from './lib/titles.js';
 import { installErrorReporting, reportError, isBug, sendFeedback } from './lib/report.js';
 import { sendable } from './lib/consent.js';
 
@@ -78,6 +80,11 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
       if (msg.type === 'checkNow') return sendResponse({ ok: true, watch: await checkWatch(await getWatch(msg.id)) });
       if (msg.type === 'checkAll') { await checkDue(true); return sendResponse({ ok: true }); }
       if (msg.type === 'reportWrong') return sendResponse({ ok: true, ...(await reportWrong(msg.id, msg.feedback, !!msg.send)) });
+      if (msg.type === 'findElsewhere') { await findElsewhere(msg.id); return sendResponse({ ok: true }); }
+      // From src/search.js, in a Google results tab: what it may do there is decided here, by the tab.
+      if (msg.type === 'searchTab') return sendResponse(await searchTabInfo(_s.tab?.id));
+      if (msg.type === 'searchAdd') return sendResponse({ ok: true, ...(await searchAdd(_s.tab?.id, msg.url, !!msg.force)) });
+      if (msg.type === 'searchStop') { await forgetSearchTab(_s.tab?.id); return sendResponse({ ok: true }); }
       sendResponse({ ok: false, error: 'unknown message' });
     } catch (e) { reportBug(e); sendResponse({ ok: false, error: String(e && e.message || e) }); }
   })();
@@ -118,12 +125,25 @@ async function tryShopify(url) {
   if (typeof p.available !== 'boolean' || !Array.isArray(p.variants)) return null;
   let price = p.price, available = p.available;
   const vid = u.searchParams.get('variant');
-  if (vid) { const v = p.variants.find((x) => String(x.id) === String(vid)); if (v) { price = v.price; available = v.available; } }
+  // The variant's barcode is its EAN/UPC when the store filled it in. Without a ?variant= only a
+  // single-variant product has one that is the product's.
+  let v = p.variants.length === 1 ? p.variants[0] : null;
+  if (vid) { v = p.variants.find((x) => String(x.id) === String(vid)) || null; if (v) { price = v.price; available = v.available; } }
   return {
     status: 'ok', title: p.title || null, price: price != null ? price / 100 : null, currency: null,
-    availability: available ? 'InStock' : 'OutOfStock', hasStructuredPrice: price != null,
+    availability: available ? 'InStock' : 'OutOfStock', hasStructuredPrice: price != null, gtin: v?.barcode || null,
     fullText: '', areaText: null, textHash: null, viaTab: false
   };
+}
+
+// Shopify's product endpoint gives no currency, and a price without one can't be compared with another
+// store's (lib/groups.js cheapest). The page's own structured data names it: read it once, when the
+// watch doesn't know it yet. Only the currency: the page's other fields may describe another variant.
+async function withPageCurrency(ex, url, known) {
+  if (!ex || ex.currency || known) return ex;
+  const page = await fetchAndExtract(url).catch(() => null);
+  if (page?.status === 'ok' && page.currency) ex.currency = page.currency;
+  return ex;
 }
 
 async function fetchHtml(url) {
@@ -141,7 +161,7 @@ async function fetchAndExtract(url) {
   if (ex.status === 'blocked') return { status: 'blocked', title: ex.title, viaTab: false, httpStatus: status };
   return {
     status: 'ok', title: ex.title, price: ex.price, currency: ex.currency, availability: ex.availability,
-    hasStructuredPrice: ex.hasStructuredPrice, fullText: ex.text, areaText: null, textHash: ex.textHash, viaTab: false, httpOk, httpStatus: status
+    hasStructuredPrice: ex.hasStructuredPrice, gtin: ex.gtin, fullText: ex.text, areaText: null, textHash: ex.textHash, viaTab: false, httpOk, httpStatus: status
   };
 }
 
@@ -262,7 +282,7 @@ async function extractViaTab(url, selector, opts = {}) {
       // A DOM-scan guess is NOT structured: on a product with no price of its own (unavailable) it is
       // some bystander's price — computeFrom drops it then.
       status: 'ok', title: result.title, price, currency, availability, priceSource,
-      hasStructuredPrice: price != null && priceSource !== 'dom',
+      hasStructuredPrice: price != null && priceSource !== 'dom', gtin: result.product?.gtin ?? null,
       fullText: full, areaText: area, textHash: fnv1a((area || full).slice(0, 20000)),
       viaTab: true, recipeUsed, recipeDerived, recipeError, recipeOffer
     };
@@ -363,7 +383,10 @@ async function saveNewWatch({ cap, selector, fetchMode, baseline, watchType = 'b
     // What the watched area read when it was picked: a check that reads something else alerts.
     lastAreaHash: selector ? fnv1a((baseline || '').slice(0, 20000)) : null,
     paused: false, history: [], lastCheckedAt: now, lastStatus: 'ok', lastError: null, lastSummary: null,
-    lastAvailability: cap.product?.availability || null
+    lastAvailability: cap.product?.availability || null,
+    // The product's EAN, when the page states one: it finds the product in other stores and suggests
+    // grouping watches of the same product (lib/groups.js). Learned again at every check.
+    gtin: selector ? null : normGtin(cap.product?.gtin)
   };
   // Same rule as a re-check (computeFrom): a rendered-DOM guess is only the product's price when the
   // product can be bought. Adding a watch on an already-unavailable listing must not seed the series
@@ -395,6 +418,8 @@ async function addByTab(tab, watchType) {
       price: sh.price ?? result.product?.price ?? null,
       currency: sh.currency || result.product?.currency || null,
       availability: sh.availability || result.product?.availability || null,
+      // Shopify names the selected variant exactly; with no barcode there, the page's GTIN may be a sibling's.
+      gtin: sh.gtin || null,
       // Keep where the price came from: the variant endpoint is structured, otherwise it is whatever
       // capturePage tagged it (jsonld / dom) — saveNewWatch trusts a 'dom' guess only when in stock.
       priceSource: sh.price != null ? 'shopify' : (result.product?.priceSource || null)
@@ -403,23 +428,40 @@ async function addByTab(tab, watchType) {
   return saveNewWatch({ cap: result, selector: null, fetchMode: 'auto', baseline: result.pageText, watchType });
 }
 
-async function addByUrl(url, watchType) {
-  if (!/^https?:\/\//i.test(url)) throw new Error('Only http(s) links can be watched.');
-  let ex = await tryShopify(url).catch(() => null);
+// A page we only have the address of (a link, a search result), read the way a check reads it: the
+// Shopify endpoint, else a plain fetch, and a background tab when that is walled off or finds neither a
+// structured price nor stock (a page that renders them with JS). The tab result is taken when it read
+// more. A cached recipe for the store applies in the tab, as at a check; none is derived here.
+async function readLink(url) {
+  let ex = await withPageCurrency(await tryShopify(url).catch(() => null), url, null);
   if (!ex) ex = await fetchAndExtract(url).catch(() => null);
-  if (!ex || ex.status !== 'ok') ex = await extractViaTab(url, null).catch(() => null);
-  if (!ex || ex.status !== 'ok') throw new Error('Could not read that link.');
+  if (!ex || ex.status !== 'ok' || (!ex.hasStructuredPrice && !ex.availability)) {
+    const ex2 = await extractViaTab(url, null).catch(() => null);
+    if (ex2?.status === 'ok' && (!ex || ex.status !== 'ok' || ex2.price != null || ex2.availability)) ex = ex2;
+    else if (!ex) ex = ex2;
+  }
+  return ex;
+}
+
+async function saveRead(url, ex, watchType) {
   const cap = {
     url, title: ex.title || url,
     product: (ex.price != null || ex.availability)
       ? {
         name: ex.title, price: ex.price ?? null, currency: ex.currency ?? null, availability: ex.availability ?? null,
-        priceSource: ex.priceSource || (ex.hasStructuredPrice ? 'jsonld' : 'dom')
+        priceSource: ex.priceSource || (ex.hasStructuredPrice ? 'jsonld' : 'dom'), gtin: ex.gtin ?? null
       }
       : null,
     pageText: ex.fullText || ''
   };
   return saveNewWatch({ cap, selector: null, fetchMode: ex.viaTab ? 'tab' : 'auto', baseline: cap.pageText, watchType });
+}
+
+async function addByUrl(url, watchType) {
+  if (!/^https?:\/\//i.test(url)) throw new Error('Only http(s) links can be watched.');
+  const ex = await readLink(url);
+  if (!ex || ex.status !== 'ok') throw new Error('Could not read that link.');
+  return saveRead(url, ex, watchType);
 }
 
 async function addAreaFromTab() {
@@ -448,6 +490,104 @@ async function contextAdd(info, tab, watchType) {
   const watch = info.linkUrl ? await addByUrl(info.linkUrl, watchType) : await addByTab(tab, watchType);
   const what = watchType === 'availability' ? 'availability' : watchType === 'price' ? 'price' : 'price & availability';
   toast('👀 Watching', `${watch.title} — for ${what}.`);
+}
+
+// --- finding the product in other stores ---
+
+// "Find in other stores" opens a Google search for the product in a new tab. While at least one such
+// tab is open, src/search.js is registered on Google's results pages. It asks here first, and adds its
+// "+ BuyTracker" buttons only in a tab opened for a watch: searchTabs (tab id → watch id), in session
+// storage, which ends with the browser session as the tabs do. The user's own searches get nothing,
+// and no listener wakes the service worker at every tab change.
+const SEARCH_SCRIPT = {
+  id: 'bt-search', matches: ['https://www.google.com/search*'], js: ['src/search.js'], runAt: 'document_idle',
+  persistAcrossSessions: false
+};
+const searchTabs = async () => (await chrome.storage.session.get('searchTabs')).searchTabs || {};
+const setSearchTabs = (tabs) => chrome.storage.session.set({ searchTabs: tabs });
+// Linking a tab and registering the script, against dropping links and unregistering it: one at a time,
+// or a results page of the user's own, finding no link yet, could unregister the script a new search
+// tab is about to need.
+const searchLock = (fn) => (globalThis.navigator?.locks?.request ? navigator.locks.request('buytracker-search', fn) : fn());
+const unregisterSearch = () => chrome.scripting.unregisterContentScripts({ ids: [SEARCH_SCRIPT.id] }).catch(() => {});
+
+async function findElsewhere(id) {
+  const w = await getWatch(id);
+  if (!w) throw new Error('Watch not found');
+  // The tab is linked to the watch before it loads the results, so the script finds the link there.
+  const tab = await chrome.tabs.create({ url: 'about:blank', active: true });
+  await searchLock(async () => {
+    await setSearchTabs({ ...(await searchTabs()), [tab.id]: id });
+    if ((await chrome.scripting.getRegisteredContentScripts({ ids: [SEARCH_SCRIPT.id] })).length === 0) {
+      await chrome.scripting.registerContentScripts([SEARCH_SCRIPT]);
+    }
+  });
+  await chrome.tabs.update(tab.id, { url: 'https://www.google.com/search?q=' + encodeURIComponent(searchQuery(w)) });
+}
+
+// What src/search.js may do in this tab: { ok, name } in a tab opened for a watch, else { ok: false }.
+// Links to closed tabs are dropped on the way; with none left, the script stops loading on Google.
+function searchTabInfo(tabId) {
+  return searchLock(() => searchTabCheck(tabId));
+}
+async function searchTabCheck(tabId) {
+  const tabs = await searchTabs();
+  let changed = false;
+  for (const t of Object.keys(tabs)) {
+    if (Number(t) === tabId) continue;
+    try { await chrome.tabs.get(Number(t)); } catch { delete tabs[t]; changed = true; }
+  }
+  const w = tabs[tabId] ? await getWatch(tabs[tabId]) : null;
+  if (tabs[tabId] && !w) { delete tabs[tabId]; changed = true; } // its watch was deleted
+  if (changed) await setSearchTabs(tabs);
+  if (!Object.keys(tabs).length) await unregisterSearch();
+  return w ? { ok: true, name: storeless(w.title || w.url, w.url) } : { ok: false };
+}
+
+// The user closed the buttons in this tab (the × on src/search.js's note).
+function forgetSearchTab(tabId) {
+  return searchLock(async () => {
+    const tabs = await searchTabs();
+    if (!(tabId in tabs)) return;
+    delete tabs[tabId];
+    await setSearchTabs(tabs);
+    if (!Object.keys(tabs).length) await unregisterSearch();
+  });
+}
+
+// One result at a time: each may open a background tab, and a user ticking five results in a row must
+// not start five at once.
+let searchChain = Promise.resolve();
+function searchAdd(tabId, url, force) {
+  const run = searchChain.then(() => addFromSearch(tabId, url, force));
+  searchChain = run.catch(() => {});
+  return run;
+}
+
+// A result's page joins the product group of the watch the search was opened for, which starts the
+// group if it had none. A page already watched joins as it is; a new one is read first and, unless
+// `force`, added only when it shows a price or stock (a review or a forum thread shows neither).
+// Resolves to { status: 'self' | 'exists' | 'joined' | 'added' | 'noproduct', price, currency, stock }.
+async function addFromSearch(tabId, rawUrl, force) {
+  const tabs = await searchTabs();
+  const anchor = tabs[tabId] ? await getWatch(tabs[tabId]) : null;
+  if (!anchor) throw new Error('This search isn’t linked to a watch any more.');
+  if (!/^https?:\/\//i.test(String(rawUrl))) throw new Error('Only http(s) links can be watched.');
+  const url = cleanLink(rawUrl);
+  const brief = (w) => ({ price: w.lastPrice ?? null, currency: w.currency || null, stock: availState(w.lastAvailability) });
+  const same = Object.values(await getWatches()).find((w) => !w.selector && sameLink(w.url, url));
+  if (same?.id === anchor.id) return { status: 'self' };
+  if (same) {
+    const was = !!same.group && same.group === anchor.group;
+    await joinGroup(same.id, anchor.id);
+    return { status: was ? 'exists' : 'joined', ...brief(same) };
+  }
+  const ex = await readLink(url);
+  if (!ex || ex.status !== 'ok') throw new Error(ex?.status === 'blocked' ? 'The store blocked reading that page.' : 'Could not read that page.');
+  if (!force && ex.price == null && !ex.availability) return { status: 'noproduct' };
+  const w = await saveRead(url, ex, anchor.watchType || 'both');
+  await joinGroup(w.id, anchor.id); // the group of the watch searched from, which starts now if it had none
+  return { status: 'added', ...brief(w) };
 }
 
 // --- checking ---
@@ -493,7 +633,7 @@ async function runCheck(watch) {
   const tabOpts = { derive: true, need: { price: needPrice, avail: needAvail }, settings };
   try {
     let ex = null;
-    if (!watch.selector) ex = await tryShopify(watch.url).catch(() => null); // Shopify fast-path (not for area watches)
+    if (!watch.selector) ex = await withPageCurrency(await tryShopify(watch.url).catch(() => null), watch.url, watch.currency); // Shopify fast-path (not for area watches)
     if (!ex) ex = (watch.fetchMode === 'tab') ? await extractViaTab(watch.url, watch.selector, tabOpts) : await fetchAndExtract(watch.url);
 
     // A tab renders client-side price/stock (hydrated JSON-LD, the buy box, the DOM price, a per-site
@@ -562,6 +702,7 @@ async function runCheck(watch) {
     if (watch.selector && areaOkFinal && ex.textHash) watch.lastAreaHash = ex.textHash;
     if (areaChanged) watch.lastSummary = excerpt(ex.areaText);
     else if (!watch.selector) watch.lastSummary = null; // left over from the retired Claude fallback
+    if (!watch.selector) { const gtin = normGtin(ex.gtin); if (gtin) watch.gtin = gtin; }
     const prevPrice = lastKnownPrice(watch.history);
     const change = recordObservation(watch, { t: now, price: res.price, currency: res.currency, availability: res.availability });
     watch.lastStatus = (res.price == null && !res.availability) ? 'no_data' : 'ok';
@@ -574,7 +715,10 @@ async function runCheck(watch) {
     const saved = await saveChecked(watch);
     // Availability as recorded (carried forward when this check couldn't read it), so a price move on a
     // listing last known to be unpurchasable stays quiet.
-    if (saved && !saved.superseded) fireNotifications(watch, { change, price: res.price, prevPrice, currency: res.currency, availability: watch.lastAvailability, areaChanged });
+    if (saved && !saved.superseded) {
+      fireNotifications(watch, { change, price: res.price, prevPrice, currency: res.currency, availability: watch.lastAvailability, areaChanged })
+        .catch((e) => { console.warn('notify', e); reportBug(e); });
+    }
     return watch;
   } catch (e) {
     reportBug(e);
@@ -589,7 +733,7 @@ function excerpt(text) {
   return t.length > 140 ? t.slice(0, 139).trimEnd() + '…' : t;
 }
 
-function fireNotifications(watch, { change, price, prevPrice, currency, availability, areaChanged }) {
+async function fireNotifications(watch, { change, price, prevPrice, currency, availability, areaChanged }) {
   if (!change && !areaChanged) return; // nothing actually changed — never repeat alerts (e.g. target-hit) every check
   const cur = currency || watch.currency || '';
   // A price on something that can't be bought right now isn't actionable — and while a product is
@@ -599,8 +743,17 @@ function fireNotifications(watch, { change, price, prevPrice, currency, availabi
   const tgt = watch.targetPrice;
   if (change && wantsPrice && tgt != null && price != null && price <= tgt) notify(watch, `🎯 Target price hit (≤ ${tgt})`, `${priceMove(prevPrice, price, cur)} · ${watch.title}`);
   else if (wantsAvail && change === 'restock') notify(watch, '📦 Back in stock', `${watch.title} is available again.`);
-  else if (wantsPrice && change === 'drop') notify(watch, '⬇️ Price dropped', `${priceMove(prevPrice, price, cur)} · ${watch.title}`);
+  else if (wantsPrice && change === 'drop') notify(watch, await dropTitle(watch, price), `${priceMove(prevPrice, price, cur)} · ${watch.title}`);
   else if (areaChanged) notify(watch, '👀 Watched area changed', `${watch.title}: ${watch.lastSummary || 'the area you watch changed.'}`);
+}
+
+// A drop that makes a store the cheapest of its product group says so: that is the one worth acting on.
+// `price` is the one the alert shows: saving may have taken a newer point synced meanwhile.
+async function dropTitle(watch, price) {
+  if (!watch.group) return '⬇️ Price dropped';
+  const members = Object.values(await getWatches()).filter((w) => w.group === watch.group && !w.selector)
+    .map((w) => (w.id === watch.id ? { ...watch, lastPrice: price } : w));
+  return members.length > 1 && cheapest(members)?.id === watch.id ? `⬇️ Now cheapest at ${recipeHost(watch.url)}` : '⬇️ Price dropped';
 }
 
 function notify(watch, title, message) {

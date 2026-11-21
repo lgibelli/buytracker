@@ -43,3 +43,34 @@ export function titleParts(titles) {
     return head && tail ? { head, tail } : { head: t, tail: '' };
   });
 }
+
+// A watch's title without the store's own name, as a product name for a group and a search: "Roborock
+// Qrevo Curv 2 Flow | Roborock IT", "Apple iPhone 15 (128 GB) - Nero : Amazon.it: Elettronica". The
+// title is cut at the first separator after which a part names the store's site, so a part that only
+// looks like a suffix ("- Nero") stays. The store's name comes from its address, not from a list.
+const SEP_ALL = new RegExp(SEP.source, 'g');
+const squash = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+
+export function storeless(title, url) {
+  const t = String(title || '').replace(/\s+/g, ' ').trim();
+  let labels = [];
+  try { labels = new URL(url).hostname.split('.').slice(0, -1).map(squash).filter((l) => l.length >= 3 && l !== 'www'); } catch { /* no address */ }
+  if (!labels.length) return t;
+  const cuts = [...t.matchAll(SEP_ALL)];
+  for (let i = 0; i < cuts.length; i++) {
+    const part = t.slice(cuts[i].index + cuts[i][0].length, i + 1 < cuts.length ? cuts[i + 1].index : t.length);
+    if (labels.some((l) => squash(part).includes(l))) return t.slice(0, cuts[i].index).trim() || t;
+  }
+  return t;
+}
+
+// What "Find in other stores" searches for: the EAN when the page gave one (it finds that exact
+// product), else the product's name, up to its first comma (marketplace titles go on with a feature
+// list) and at most 12 words.
+export function searchQuery(w) {
+  if (w.gtin) return w.gtin;
+  let q = storeless(w.title || '', w.url);
+  const comma = q.indexOf(', ');
+  if (comma > 0 && q.slice(0, comma).split(' ').length >= 3) q = q.slice(0, comma);
+  return q.split(' ').slice(0, 12).join(' ') || w.url;
+}
