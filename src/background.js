@@ -8,6 +8,7 @@ import {
 } from './lib/storage.js';
 import { syncSoon, syncRelevant } from './lib/sync.js';
 import { normGtin, cheapest, joinGroup, cleanLink, sameLink } from './lib/groups.js';
+import { productJsUrl, readProductJs } from './lib/shopify.js';
 import { storeless, searchQuery } from './lib/titles.js';
 import { installErrorReporting, reportError, isBug, sendFeedback } from './lib/report.js';
 import { sendable } from './lib/consent.js';
@@ -113,25 +114,18 @@ function langFor(url) {
 // Shopify exposes /products/<handle>.js with a per-variant `available` boolean and price (cents).
 // Deterministic, free, no bot wall — the gold-standard signal for the huge Shopify ecosystem.
 async function tryShopify(url) {
-  let u;
-  try { u = new URL(url); } catch { return null; }
-  const m = u.pathname.match(/\/products\/[^/]+/);
-  if (!m) return null;
+  const endpoint = productJsUrl(url);
+  if (!endpoint) return null;
   let res;
-  try { res = await fetch(u.origin + m[0] + '.js', { credentials: 'include', headers: { Accept: 'application/json' } }); } catch { return null; }
+  try { res = await fetch(endpoint, { credentials: 'include', headers: { Accept: 'application/json' } }); } catch { return null; }
   if (!res.ok) return null;
   let p;
   try { p = await res.json(); } catch { return null; }
-  if (typeof p.available !== 'boolean' || !Array.isArray(p.variants)) return null;
-  let price = p.price, available = p.available;
-  const vid = u.searchParams.get('variant');
-  // The variant's barcode is its EAN/UPC when the store filled it in. Without a ?variant= only a
-  // single-variant product has one that is the product's.
-  let v = p.variants.length === 1 ? p.variants[0] : null;
-  if (vid) { v = p.variants.find((x) => String(x.id) === String(vid)) || null; if (v) { price = v.price; available = v.available; } }
+  const v = readProductJs(p, url);
+  if (!v) return null;
   return {
-    status: 'ok', title: p.title || null, price: price != null ? price / 100 : null, currency: null,
-    availability: available ? 'InStock' : 'OutOfStock', hasStructuredPrice: price != null, gtin: v?.barcode || null,
+    status: 'ok', title: v.title, price: v.price, currency: null,
+    availability: v.availability, hasStructuredPrice: v.price != null, gtin: v.gtin,
     fullText: '', areaText: null, textHash: null, viaTab: false
   };
 }
