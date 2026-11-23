@@ -25,7 +25,8 @@ FEATURES
 • One-click watch — open a product page and hit "+ Watch page", or right-click any page or link.
 • Watch a specific area — click "+ Area" and select just the price/offer region of a page to monitor.
 • Price history — a clean chart of every price point BuyTracker has recorded.
-• Smart alerts — desktop notifications on price drops, restocks, a target price you set, or a change in an area you watch.
+• Smart alerts — desktop notifications on price drops (old → new price, and by how much), restocks, a target price you set, or a change in an area you watch.
+• Compare stores — watch the same product at several stores as one item, with the best price on top. "Find in other stores" searches Google for the product, and a "+ BuyTracker" button on each result adds that store.
 • Set your own check interval per item and a target price.
 • Works broadly — uses a site's structured data and a fast path for Shopify stores; falls back to rendering the page when needed.
 • Free recipe creator for tricky stores — when BuyTracker can't read a store on its own, the watch offers to learn it. Only if you allow that store, a free service works out how to read it once; every later check runs in your browser. Experts can run their own copy instead.
@@ -33,6 +34,7 @@ FEATURES
 PRIVACY
 • No account, no sign-up, no tracking.
 • Your watches, history, and settings stay in your browser. With sync on (the default, can be turned off in Settings), your browser's own sync also copies the watch list, not the history, to your other computers signed in to the same Google or Firefox account; it never reaches us.
+• "Find in other stores" is a normal Google search from your browser; BuyTracker adds its buttons only in the tab it opened for that search.
 • Nothing about the pages you watch is sent to us unless you choose to: a store you allow for the recipe creator (its page address and a short extract of the product page, never anything about you), or a wrong-result report you send from a watch.
 • Anonymous error reports about bugs in BuyTracker's own code (no web addresses, no page text) help fix it. They are on by default; turn them off on the welcome page or in Settings.
 • Everything sent is anonymous: no account, no ID.
@@ -72,7 +74,7 @@ The video (30 s, 1080p, with an ElevenLabs voiceover) is made in two steps:
 ## Single purpose
 
 ```
-Monitor product web pages the user chooses and notify them when the price, availability, or offers on those pages change.
+Monitor product web pages the user chooses, compare the same product across the stores the user picks, and notify them when the price, availability, or offers on those pages change.
 ```
 
 - **Category:** Shopping
@@ -83,9 +85,9 @@ Monitor product web pages the user chooses and notify them when the price, avail
 
 | Permission | Justification |
 |---|---|
-| `host_permissions` (`<all_urls>`) | Users can choose to watch a product on any retailer's website, so the extension must be able to read and re-check pages on any domain the user explicitly adds as a watch. It does not run on sites the user hasn't chosen to track. |
-| `scripting` | To read the real rendered price/availability and to let the user click a specific region of a page to watch, the extension injects a small content script into the product page the user is tracking. |
-| `tabs` | Some product pages only show price/stock after JavaScript runs, so the extension opens the page in a background tab to read the rendered value. It also opens the product page when the user clicks an alert notification. |
+| `host_permissions` (`<all_urls>`) | Users can choose to watch a product on any retailer's website, so the extension must be able to read and re-check pages on any domain the user explicitly adds as a watch. It does not run on sites the user hasn't chosen to track, with one exception the user starts: "Find in other stores" opens a Google search for the product, and only in that tab the extension adds an "add this store" button to each result. |
+| `scripting` | To read the real rendered price/availability and to let the user click a specific region of a page to watch, the extension injects a small content script into the product page the user is tracking. While a "Find in other stores" search tab the user opened is open, it registers a content script on Google's results pages, which adds buttons only in that tab and is unregistered once no such tab is left. |
+| `tabs` | Some product pages only show price/stock after JavaScript runs, so the extension opens the page in a background tab to read the rendered value. It also opens the product page when the user clicks an alert notification, and the Google search tab when the user presses "Find in other stores". |
 | `activeTab` | When the user clicks "Watch this page" or "Watch area" in the popup, the extension acts on the user's current tab to capture that product. |
 | `storage` / `unlimitedStorage` | Stores the user's watches, settings, and per-item price history locally. `unlimitedStorage` is needed because price history accumulates over time for many tracked items. The watch list itself (no history) is also kept in `chrome.storage.sync`, so Chrome sync carries it to the user's other computers; the user can turn that off in Settings. |
 | `alarms` | Schedules periodic background re-checks of the user's watched pages on the interval they set. |

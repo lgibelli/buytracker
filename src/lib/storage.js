@@ -34,7 +34,8 @@ export const SHARED_SETTINGS = ['defaultIntervalMin', 'recipeService', 'recipeHo
 // What the user set a watch up as. This part is shared between computers (lib/sync.js); the rest of a
 // watch (history, fetch mode, last check and status) is what each computer's own checks found.
 // Changing any of it stamps `specAt`.
-export const SPEC_FIELDS = ['url', 'title', 'createdAt', 'watchType', 'intervalMin', 'targetPrice', 'selector', 'paused'];
+// `group`: the product group the watch is in, if any (lib/groups.js).
+export const SPEC_FIELDS = ['url', 'title', 'createdAt', 'watchType', 'intervalMin', 'targetPrice', 'selector', 'paused', 'group'];
 
 export function specOf(w) {
   const s = {};
@@ -114,8 +115,12 @@ export function updateWatch(id, mutate) {
     const prev = watches[id] || null;
     const next = mutate(prev);
     if (!next) return null;
-    // A new watch, or one the user re-set-up here: stamp when, unless the caller already did.
-    if (!prev ? !next.specAt : (next.specAt === prev.specAt && !sameJson(specOf(prev), specOf(next)))) next.specAt = Date.now();
+    // A new watch, or one the user re-set-up here: stamp when, unless the caller already did. Always
+    // later than the setup it replaces, even within the same millisecond, or sync would take the
+    // change for the older one.
+    if (!prev ? !next.specAt : (next.specAt === prev.specAt && !sameJson(specOf(prev), specOf(next)))) {
+      next.specAt = Math.max(Date.now(), (prev?.specAt || 0) + 1);
+    }
     watches[id] = next;
     await chrome.storage.local.set({ watches });
     return next;
@@ -225,8 +230,6 @@ export function trustedPrice(price, { structured, availability }) {
   return availState(availability) === 'out' ? null : price;
 }
 
-// Append a price/availability point only when something actually changes (CamelCamelCamel-style
-// step series). Returns the change kind: 'new' | 'drop' | 'rise' | 'restock' | 'oos' | 'change' | null.
 // The last price on record (history may end in a priceless point while out of stock) — what a
 // notification's "old → new" compares a new price against, same as the popup card's delta.
 export function lastKnownPrice(history) {
@@ -245,6 +248,8 @@ export function priceMove(prev, price, currency) {
   return n === '0.00' ? move : `${move} (${pct < 0 ? '-' : '+'}${n}%)`;
 }
 
+// Append a price/availability point only when something actually changes (CamelCamelCamel-style
+// step series). Returns the change kind: 'new' | 'drop' | 'rise' | 'restock' | 'oos' | 'change' | null.
 export function recordObservation(watch, { t, price, currency, availability }) {
   watch.history = watch.history || [];
   const prev = watch.history[watch.history.length - 1] || null;

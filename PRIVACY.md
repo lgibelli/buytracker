@@ -1,6 +1,6 @@
 # BuyTracker — Privacy Policy
 
-_Last updated: 2026-11-19_
+_Last updated: 2026-11-20_
 
 BuyTracker has no accounts, analytics or ads. It sends nothing about the pages you watch
 to the developer unless you choose to, as described under [Free recipe creator](#free-recipe-creator-store-by-store)
@@ -19,13 +19,23 @@ except as described below.
 
 With "Sync between computers" on in Settings (it is on unless you turn it off), BuyTracker
 also keeps a copy of your watch list in your browser's sync storage: each watch's page
-address, title, target price, check interval, whether it's paused, and its last price and
-stock, plus the recipe creator switch, the stores you allowed or declined for it, and the
+address, title, target price, check interval, whether it's paused, which watches are the
+same product, and its last price and stock, plus the recipe creator switch, the stores you allowed or declined for it, and the
 check interval for new watches. Your browser carries that copy to your other computers
 signed in to the same account: Chrome through your Google account when Chrome sync is on,
 Firefox through your Firefox account. Google or Mozilla handle it under their own privacy
 policies. It never goes to the developer. Price history, the address and token of your own
 recipe worker, and the error-report setting stay on each computer.
+
+## Finding a product in other stores
+
+"Find in other stores", on a watch in the popup, opens a Google search for that product in a
+new tab: for its EAN barcode number when the store's page states one, otherwise for its name.
+Google receives that search from your browser as it would any search you type, under
+[Google's privacy policy](https://policies.google.com/privacy). In that tab only, BuyTracker
+adds a "+ BuyTracker" button to the results; your own Google searches are left alone.
+Pressing a button reads that result's page from your browser, as when you watch a page, and
+adds it to the product's group. Nothing about the search goes to the developer.
 
 ## Free recipe creator, store by store
 

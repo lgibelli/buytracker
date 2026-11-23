@@ -76,7 +76,11 @@ function refMatches(ref, url, keys) {
   return false;
 }
 
-// Walk JSON-LD blocks for the best Product/Offer. Returns {name, price, currency, availability} or null.
+// The product's GTIN (EAN/UPC) as schema.org states it, on the offer or the product; checked by the
+// caller (groups.js normGtin).
+const gtinOf = (o) => (o ? o.gtin13 ?? o.gtin ?? o.gtin12 ?? o.gtin14 ?? o.gtin8 ?? null : null);
+
+// Walk JSON-LD blocks for the best Product/Offer. Returns {name, price, currency, availability, gtin} or null.
 // Each offer becomes its own candidate so per-variant offers — whether listed in one Product's
 // `offers` array or split across many Product blocks (Shopify does the latter) — can be matched
 // individually against the URL's variant.
@@ -94,7 +98,7 @@ export function productFromJsonLd(blocks, url) {
       if (price == null && !availability) continue;
       const ref = off?.url || off?.['@id'] || node.url || node['@id'] || null;
       const sku = off?.sku ?? node.sku ?? null;
-      cands.push({ name: node.name || null, price, currency, availability, ref, sku });
+      cands.push({ name: node.name || null, price, currency, availability, ref, sku, gtin: gtinOf(off) ?? gtinOf(node) });
     }
   };
   const walk = (n) => {
@@ -107,7 +111,7 @@ export function productFromJsonLd(blocks, url) {
   blocks.forEach(walk);
   if (!cands.length) return null;
 
-  const strip = (c) => ({ name: c.name, price: c.price, currency: c.currency, availability: c.availability });
+  const strip = (c) => ({ name: c.name, price: c.price, currency: c.currency, availability: c.availability, gtin: c.gtin });
 
   // Variant match wins: the candidate whose offer sku or url/@id matches the selected variant.
   if (keys.size) {
@@ -173,6 +177,7 @@ export function extractFromHtml(html, url) {
     currency: product?.currency ?? null,
     availability: product?.availability ?? null,
     hasStructuredPrice: product?.price != null,
+    gtin: product?.gtin ?? null,
     text,
     textHash: fnv1a(text.slice(0, 20000))
   };
